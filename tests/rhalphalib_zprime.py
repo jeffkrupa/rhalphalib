@@ -11,6 +11,7 @@ rl.util.install_roofit_helpers()
 rl.ParametericSample.PreferRooParametricHist = False
 
 
+poly_order = (1,1)
 def expo_sample(norm, scale, obs):
     cdf = scipy.stats.expon.cdf(scale=scale, x=obs.binning) * norm
     return (np.diff(cdf), obs.binning, obs.name)
@@ -56,6 +57,8 @@ def test_rhalphabet(tmpdir):
         qcdmodel.addChannel(passCh)
         # mock template
         ptnorm = 1
+        print(ptbin,"pass",df[f"QCD_msd_pass_{ptbin}"].to_numpy(),)
+        print(ptbin,"fail",df[f"QCD_msd_fail_{ptbin}"].to_numpy(),)
         failTempl = (df[f"QCD_msd_fail_{ptbin}"].to_numpy(), msd.binning, "msd") #expo_sample(norm=ptnorm * 1e5, scale=40, obs=msd)
         passTempl = (df[f"QCD_msd_pass_{ptbin}"].to_numpy(), msd.binning, "msd") #expo_sample(norm=ptnorm * 1e3, scale=40, obs=msd)
         #print(
@@ -67,7 +70,7 @@ def test_rhalphabet(tmpdir):
     #print("qcdfail,qcdpass",qcdfail,",",qcdpass)
     #sys.exit()
     qcdeff = qcdpass / qcdfail
-    tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", (2,2), ["pt", "rho"], limits=(0, 10))
+    tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", poly_order, ["pt", "rho"], limits=(0, 10))
     tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
     for ptbin in range(npt):
         failCh = qcdmodel["ptbin%dfail" % ptbin]
@@ -106,7 +109,7 @@ def test_rhalphabet(tmpdir):
     decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + "_deco", qcdfit, param_names)
     tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
     tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
-    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", (2, 2), ["pt", "rho"], limits=(0, 10))
+    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], limits=(0, 10))
     tf_dataResidual_params = tf_dataResidual(ptscaled, rhoscaled)
     tf_params = qcdeff * tf_MCtempl_params_final * tf_dataResidual_params
 
@@ -121,15 +124,17 @@ def test_rhalphabet(tmpdir):
             isPass = region == "pass"
             ptnorm = 1.0
             templates = {
-                "wqq": (df[f"WJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), #gaus_sample(norm=ptnorm * (100 if isPass else 300), loc=80, scale=8, obs=msd),
-                "zqq": (df[f"ZJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), #gaus_sample(norm=ptnorm * (200 if isPass else 100), loc=91, scale=8, obs=msd),
+                #"qcd": (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),  
+                "wqq": (df[f"WJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),
+                "zqq": (df[f"ZJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                "m50": (df[f"VectorZPrimeToQQ_M50.root_msd_{region}_{ptbin}"].to_numpy()*.10, msd.binning, "msd"), 
                 #"tqq": #gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
-                "hqq": gaus_sample(norm=ptnorm * (20 if isPass else 5), loc=125, scale=8, obs=msd),
             }
-            for sName in ["zqq", "wqq", "hqq"]:
+            #for sName in ["zqq", "wqq", "m50"]:
+            for sName in templates.keys():
                 # some mock expectations
                 templ = templates[sName]
-                stype = rl.Sample.SIGNAL if sName == "hqq" else rl.Sample.BACKGROUND
+                stype = rl.Sample.SIGNAL if sName == "m50" else rl.Sample.BACKGROUND
                 sample = rl.TemplateSample(ch.name + "_" + sName, stype, templ)
 
                 # mock systematics
@@ -145,16 +150,20 @@ def test_rhalphabet(tmpdir):
                 ch.addSample(sample)
 
             # make up a data_obs, with possibly different yield values
-            templates = {
-                "wqq": gaus_sample(norm=ptnorm * (100 if isPass else 300), loc=80, scale=8, obs=msd),
-                "zqq": gaus_sample(norm=ptnorm * (200 if isPass else 100), loc=91, scale=8, obs=msd),
-                "tqq": gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
-                "hqq": gaus_sample(norm=ptnorm * (20 if isPass else 5), loc=125, scale=8, obs=msd),
-                "qcd": expo_sample(norm=ptnorm * (1e3 if isPass else 1e5), scale=40, obs=msd),
-            }
+            #templates = {
+            #    "wqq": gaus_sample(norm=ptnorm * (100 if isPass else 300), loc=80, scale=8, obs=msd),
+            #    "zqq": gaus_sample(norm=ptnorm * (200 if isPass else 100), loc=91, scale=8, obs=msd),
+            #    "tqq": gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
+            #    "hqq": gaus_sample(norm=ptnorm * (20 if isPass else 5), loc=125, scale=8, obs=msd),
+            #    "qcd": expo_sample(norm=ptnorm * (1e3 if isPass else 1e5), scale=40, obs=msd),
+            #}
+            templates["qcd"] = (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd")
+ 
             yields = sum(tpl[0] for tpl in templates.values())
             if throwPoisson:
                 yields = np.random.poisson(yields)
+            #data_obs = (yields, msd.binning, msd.name)
+
             data_obs = (df[f"data_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd") #(yields, msd.binning, msd.name)
             ch.setObservation(data_obs)
 
@@ -170,7 +179,11 @@ def test_rhalphabet(tmpdir):
 
         qcdparams = np.array([rl.IndependentParameter("qcdparam_ptbin%d_msdbin%d" % (ptbin, i), 0) for i in range(msd.nbins)])
         initial_qcd = failCh.getObservation().astype(float)  # was integer, and numpy complained about subtracting float from it
+        #print(initial_qcd)
+        for sample in passCh:
+            print(sample.name, sample.getExpectation(nominal=True))
         for sample in failCh:
+            print(sample.name, sample.getExpectation(nominal=True))
             initial_qcd -= sample.getExpectation(nominal=True)
         if np.any(initial_qcd < 0.0):
             raise ValueError("initial_qcd negative for some bins..", initial_qcd)
@@ -237,7 +250,6 @@ def test_rhalphabet(tmpdir):
 
 
 if __name__ == "__main__":
-    if not os.path.exists("tmp"):
-        os.mkdir("tmp")
-    test_rhalphabet("tmp")
-    #print("done?")
+    if not os.path.exists("tmp2"):
+        os.mkdir("tmp2")
+    test_rhalphabet("tmp2")

@@ -10,6 +10,23 @@ import pandas as pd
 rl.util.install_roofit_helpers()
 rl.ParametericSample.PreferRooParametricHist = False
 
+SF = {
+    "2017" :  {
+        "V_SF" : 0.896,
+        "V_SF_err" : 0.065,
+        "shift_SF" : 0.99,
+        "shift_SF_err" : 0.004, 
+    }
+}
+
+short_to_long = {
+    "wqq" : "WJetsToQQ",
+    "zqq" : "ZJetsToQQ",
+    "tt"  : "TTbar",
+    "st"  : "SingleTop",
+    "wlnu": "WJetsToLNu",
+    "m75" : "VectorZPrimeToQQ_M75.root",
+}
 
 poly_order = (1,1)
 def expo_sample(norm, scale, obs):
@@ -26,7 +43,9 @@ def test_rhalphabet(tmpdir):
     throwPoisson = False
 
     jec = rl.NuisanceParameter("CMS_jec", "lnN")
-    massScale = rl.NuisanceParameter("CMS_msdScale", "shape")
+    sys_shape_dict = {}
+    sys_shape_dict["jes"] = rl.NuisanceParameter("CMS_jes", "shape")
+    #sys_shape_dict["jer"] = rl.NuisanceParameter("CMS_jer", "shape")
     lumi = rl.NuisanceParameter("CMS_lumi", "lnN")
     tqqeffSF = rl.IndependentParameter("tqqeffSF", 1.0, 0, 10)
     tqqnormSF = rl.IndependentParameter("tqqnormSF", 1.0, 0, 10)
@@ -49,7 +68,7 @@ def test_rhalphabet(tmpdir):
     qcdpass, qcdfail = 0.0, 0.0
 
 
-    df = pd.read_csv("histograms.csv") 
+    df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/30Nov23/results/histograms.csv") 
     for ptbin in range(npt):
         failCh = rl.Channel("ptbin%d%s" % (ptbin, "fail"))
         passCh = rl.Channel("ptbin%d%s" % (ptbin, "pass"))
@@ -127,36 +146,38 @@ def test_rhalphabet(tmpdir):
                 #"qcd": (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),  
                 "wqq": (df[f"WJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),
                 "zqq": (df[f"ZJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                "m50": (df[f"VectorZPrimeToQQ_M50.root_msd_{region}_{ptbin}"].to_numpy()*.10, msd.binning, "msd"), 
+                "tt": (df[f"TTbar_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                "wlnu": (df[f"WJetsToLNu_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                "st": (df[f"SingleTop_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                "m75": (df[f"VectorZPrimeToQQ_M75.root_msd_{region}_{ptbin}"].to_numpy()*.10, msd.binning, "msd"), 
                 #"tqq": #gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
             }
+            print(templates["wqq"][0])
             #for sName in ["zqq", "wqq", "m50"]:
             for sName in templates.keys():
                 # some mock expectations
                 templ = templates[sName]
-                stype = rl.Sample.SIGNAL if sName == "m50" else rl.Sample.BACKGROUND
+                stype = rl.Sample.SIGNAL if sName == "m75" else rl.Sample.BACKGROUND
                 sample = rl.TemplateSample(ch.name + "_" + sName, stype, templ)
 
                 # mock systematics
-                jecup_ratio = np.random.normal(loc=1, scale=0.05, size=msd.nbins)
-                msdUp = np.linspace(0.9, 1.1, msd.nbins)
-                msdDn = np.linspace(1.2, 0.8, msd.nbins)
+                #jecup_ratio = np.random.normal(loc=1, scale=0.05, size=msd.nbins)
+                #msdUp = np.linspace(0.9, 1.1, msd.nbins)
+                #msdDn = np.linspace(1.2, 0.8, msd.nbins)
 
                 # for jec we set lnN prior, shape will automatically be converted to norm systematic
-                sample.setParamEffect(jec, jecup_ratio)
-                sample.setParamEffect(massScale, msdUp, msdDn)
+                # sample.setParamEffect(jec, jecup_ratio)
+
+                for sys_name, sys_val in sys_shape_dict.items():
+                    up   = df[f"{short_to_long[sName]}_msd_{sys_name}Up_{region}_{ptbin}"].to_numpy()
+                    down = df[f"{short_to_long[sName]}_msd_{sys_name}Down_{region}_{ptbin}"].to_numpy()
+                    
+                    sample.setParamEffect(sys_val, up, down)
+
                 sample.setParamEffect(lumi, 1.027)
 
                 ch.addSample(sample)
 
-            # make up a data_obs, with possibly different yield values
-            #templates = {
-            #    "wqq": gaus_sample(norm=ptnorm * (100 if isPass else 300), loc=80, scale=8, obs=msd),
-            #    "zqq": gaus_sample(norm=ptnorm * (200 if isPass else 100), loc=91, scale=8, obs=msd),
-            #    "tqq": gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
-            #    "hqq": gaus_sample(norm=ptnorm * (20 if isPass else 5), loc=125, scale=8, obs=msd),
-            #    "qcd": expo_sample(norm=ptnorm * (1e3 if isPass else 1e5), scale=40, obs=msd),
-            #}
             templates["qcd"] = (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd")
  
             yields = sum(tpl[0] for tpl in templates.values())
@@ -250,6 +271,9 @@ def test_rhalphabet(tmpdir):
 
 
 if __name__ == "__main__":
-    if not os.path.exists("tmp2"):
-        os.mkdir("tmp2")
-    test_rhalphabet("tmp2")
+    opath = "withsysts_v0"
+    if os.path.exists(opath):
+        raise ValueError(f"Path {opath} exists")
+    else:
+        os.mkdir(opath)
+    test_rhalphabet(opath)

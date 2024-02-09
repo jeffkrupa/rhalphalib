@@ -7,8 +7,15 @@ import scipy.stats
 import pickle
 import ROOT
 import pandas as pd
+import argparse
+
 rl.util.install_roofit_helpers()
 rl.ParametericSample.PreferRooParametricHist = False
+
+parser = argparse.ArgumentParser(description='Rhalphalib setup.')
+parser.add_argument("--opath", action='store', type=str, required=True, help="Path to store output.")
+parser.add_argument("--all_signals", action='store_true', help="Run on all signal templates.")
+args = parser.parse_args()
 
 SF = {
     "2017" :  {
@@ -25,8 +32,20 @@ short_to_long = {
     "tt"  : "TTbar",
     "st"  : "SingleTop",
     "wlnu": "WJetsToLNu",
+    "m50" : "VectorZPrimeToQQ_M50.root",
     "m75" : "VectorZPrimeToQQ_M75.root",
+    "m100" : "VectorZPrimeToQQ_M100.root",
+    "m125" : "VectorZPrimeToQQ_M125.root",
+    "m150" : "VectorZPrimeToQQ_M150.root",
+    "m200" : "VectorZPrimeToQQ_M200.root",
+    "m250" : "VectorZPrimeToQQ_M250.root",
+    "m300" : "VectorZPrimeToQQ_M300.root",
 }
+
+if args.all_signals:
+    signals = ["m50","m75","m100","m125","m150","m200","m250","m300"]
+else:
+    signals = ["m150"]
 
 poly_order = (1,1)
 def expo_sample(norm, scale, obs):
@@ -39,12 +58,12 @@ def gaus_sample(norm, loc, scale, obs):
     return (np.diff(cdf), obs.binning, obs.name)
 
 
-def test_rhalphabet(tmpdir):
+def test_rhalphabet(tmpdir,sig):
     throwPoisson = False
 
     jec = rl.NuisanceParameter("CMS_jec", "lnN")
     sys_shape_dict = {}
-    sys_shape_dict["jes"] = rl.NuisanceParameter("CMS_jes", "shape")
+    #sys_shape_dict["jes"] = rl.NuisanceParameter("CMS_jes", "shape")
     #sys_shape_dict["jer"] = rl.NuisanceParameter("CMS_jer", "shape")
     lumi = rl.NuisanceParameter("CMS_lumi", "lnN")
     tqqeffSF = rl.IndependentParameter("tqqeffSF", 1.0, 0, 10)
@@ -52,7 +71,7 @@ def test_rhalphabet(tmpdir):
 
     ptbins = np.array([525, 575, 625, 700, 800, 1500])
     npt = len(ptbins) - 1
-    msdbins = np.linspace(40, 400, 25)
+    msdbins = np.linspace(40, 400, 40)
     msd = rl.Observable("msd", msdbins)
 
     # here we derive these all at once with 2D array
@@ -68,7 +87,7 @@ def test_rhalphabet(tmpdir):
     qcdpass, qcdfail = 0.0, 0.0
 
 
-    df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/30Nov23/results/histograms.csv") 
+    df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/7Feb23-2prongarbitration-2/results/histograms.csv") 
     for ptbin in range(npt):
         failCh = rl.Channel("ptbin%d%s" % (ptbin, "fail"))
         passCh = rl.Channel("ptbin%d%s" % (ptbin, "pass"))
@@ -76,8 +95,8 @@ def test_rhalphabet(tmpdir):
         qcdmodel.addChannel(passCh)
         # mock template
         ptnorm = 1
-        print(ptbin,"pass",df[f"QCD_msd_pass_{ptbin}"].to_numpy(),)
-        print(ptbin,"fail",df[f"QCD_msd_fail_{ptbin}"].to_numpy(),)
+        #print(ptbin,"pass",df[f"QCD_msd_pass_{ptbin}"].to_numpy(),)
+        #print(ptbin,"fail",df[f"QCD_msd_fail_{ptbin}"].to_numpy(),)
         failTempl = (df[f"QCD_msd_fail_{ptbin}"].to_numpy(), msd.binning, "msd") #expo_sample(norm=ptnorm * 1e5, scale=40, obs=msd)
         passTempl = (df[f"QCD_msd_pass_{ptbin}"].to_numpy(), msd.binning, "msd") #expo_sample(norm=ptnorm * 1e3, scale=40, obs=msd)
         #print(
@@ -133,7 +152,7 @@ def test_rhalphabet(tmpdir):
     tf_params = qcdeff * tf_MCtempl_params_final * tf_dataResidual_params
 
     # build actual fit model now
-    model = rl.Model("testModel")
+    model = rl.Model(f"{sig}_model")
 
     for ptbin in range(npt):
         for region in ["pass", "fail"]:
@@ -149,15 +168,16 @@ def test_rhalphabet(tmpdir):
                 "tt": (df[f"TTbar_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 "wlnu": (df[f"WJetsToLNu_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 "st": (df[f"SingleTop_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                "m75": (df[f"VectorZPrimeToQQ_M75.root_msd_{region}_{ptbin}"].to_numpy()*.10, msd.binning, "msd"), 
+                sig : (df[f"{short_to_long[sig]}_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 #"tqq": #gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
             }
-            print(templates["wqq"][0])
+            #print(templates["wqq"][0])
             #for sName in ["zqq", "wqq", "m50"]:
             for sName in templates.keys():
+                print(short_to_long[sName])
                 # some mock expectations
                 templ = templates[sName]
-                stype = rl.Sample.SIGNAL if sName == "m75" else rl.Sample.BACKGROUND
+                stype = rl.Sample.SIGNAL if sName == sig else rl.Sample.BACKGROUND
                 sample = rl.TemplateSample(ch.name + "_" + sName, stype, templ)
 
                 # mock systematics
@@ -167,24 +187,25 @@ def test_rhalphabet(tmpdir):
 
                 # for jec we set lnN prior, shape will automatically be converted to norm systematic
                 # sample.setParamEffect(jec, jecup_ratio)
-
+                print("nominal",df[f"{short_to_long[sName]}_msd_{region}_{ptbin}"].to_numpy())
                 for sys_name, sys_val in sys_shape_dict.items():
                     up   = df[f"{short_to_long[sName]}_msd_{sys_name}Up_{region}_{ptbin}"].to_numpy()
                     down = df[f"{short_to_long[sName]}_msd_{sys_name}Down_{region}_{ptbin}"].to_numpy()
-                    
+                    print(sys_name, sys_val, )#
+                    print("up",up)
+                    print("down",down) 
                     sample.setParamEffect(sys_val, up, down)
 
-                sample.setParamEffect(lumi, 1.027)
+                #sample.setParamEffect(lumi, 1.027)
 
                 ch.addSample(sample)
 
             templates["qcd"] = (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd")
  
-            yields = sum(tpl[0] for tpl in templates.values())
+            yields = sum(tpl[0] for itpl, tpl in templates.items() if sig not in itpl)
             if throwPoisson:
                 yields = np.random.poisson(yields)
             #data_obs = (yields, msd.binning, msd.name)
-
             data_obs = (df[f"data_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd") #(yields, msd.binning, msd.name)
             ch.setObservation(data_obs)
 
@@ -200,11 +221,7 @@ def test_rhalphabet(tmpdir):
 
         qcdparams = np.array([rl.IndependentParameter("qcdparam_ptbin%d_msdbin%d" % (ptbin, i), 0) for i in range(msd.nbins)])
         initial_qcd = failCh.getObservation().astype(float)  # was integer, and numpy complained about subtracting float from it
-        #print(initial_qcd)
-        for sample in passCh:
-            print(sample.name, sample.getExpectation(nominal=True))
         for sample in failCh:
-            print(sample.name, sample.getExpectation(nominal=True))
             initial_qcd -= sample.getExpectation(nominal=True)
         if np.any(initial_qcd < 0.0):
             raise ValueError("initial_qcd negative for some bins..", initial_qcd)
@@ -263,17 +280,19 @@ def test_rhalphabet(tmpdir):
     tqqpass.setParamEffect(tqqnormSF, 1 * tqqnormSF)
     tqqfail.setParamEffect(tqqnormSF, 1 * tqqnormSF)
     '''
-    with open(os.path.join(str(tmpdir), "testModel.pkl"), "wb") as fout:
+    with open(os.path.join(str(tmpdir), f"{sig}_model.pkl"), "wb") as fout:
         pickle.dump(model, fout)
 
-    model.renderCombine(os.path.join(str(tmpdir), "testModel"))
+    model.renderCombine(os.path.join(str(tmpdir), f"{sig}_model"))
 
 
 
 if __name__ == "__main__":
-    opath = "withsysts_v0"
-    if os.path.exists(opath):
-        raise ValueError(f"Path {opath} exists")
-    else:
-        os.mkdir(opath)
-    test_rhalphabet(opath)
+    os.mkdir(args.opath)
+    for sig in signals:
+        opath = f"./{args.opath}/{sig}/"
+        if os.path.exists(opath):
+            raise RuntimeError(f"Path {opath} exists")
+        else:
+            os.mkdir(opath)
+        test_rhalphabet(opath,sig)

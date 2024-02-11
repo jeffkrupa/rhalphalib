@@ -17,6 +17,7 @@ parser.add_argument("--opath", action='store', type=str, required=True, help="Pa
 parser.add_argument("--ipt", action='store', type=int, required=True, help="TF pt order.")
 parser.add_argument("--irho", action='store', type=int, required=True, help="TF rho order.")
 parser.add_argument("--all_signals", action='store_true', help="Run on all signal templates.")
+parser.add_argument("--MCTF", action='store_true', help="Prefit the TF params to MC.")
 args = parser.parse_args()
 
 SF = {
@@ -59,6 +60,72 @@ def gaus_sample(norm, loc, scale, obs):
     cdf = scipy.stats.norm.cdf(loc=loc, scale=scale, x=obs.binning) * norm
     return (np.diff(cdf), obs.binning, obs.name)
 
+def plot_mctf(tf_MCtempl, msdbins, name):
+    """
+    Plot the MC pass / fail TF as function of (pt,rho) and (pt,msd)
+    """
+    import matplotlib.pyplot as plt
+
+    # arrays for plotting pt vs msd                    
+    pts = np.linspace(525,1200,300)
+    ptpts, msdpts = np.meshgrid(pts[:-1] + 0.5 * np.diff(pts), msdbins[:-1] + 0.5 * np.diff(msdbins), indexing='ij')
+    ptpts_scaled = (ptpts - 525.) / (1500. - 525.)
+    rhopts = 2*np.log(msdpts/ptpts)
+
+    rhopts_scaled = (rhopts - (-5.5)) / ((-2.) - (-5.5))
+    validbins = (rhopts_scaled >= 0) & (rhopts_scaled <= 1)
+
+    ptpts = ptpts[validbins]
+    msdpts = msdpts[validbins]
+    ptpts_scaled = ptpts_scaled[validbins]
+    rhopts_scaled = rhopts_scaled[validbins]
+
+    tf_MCtempl_vals = tf_MCtempl(ptpts_scaled, rhopts_scaled, nominal=True)
+    df = pd.DataFrame([])
+    df['msd'] = msdpts.reshape(-1)
+    df['pt'] = ptpts.reshape(-1)
+    df['MCTF'] = tf_MCtempl_vals.reshape(-1)
+    print(df['MCTF'])
+    fig, ax = plt.subplots()
+    h = ax.hist2d(x=df["msd"],y=df["pt"],weights=df["MCTF"], bins=(msdbins,pts))
+    plt.xlabel("$m_{sd}$ [GeV]")
+    plt.ylabel("$p_{T}$ [GeV]")
+    cb = fig.colorbar(h[3],ax=ax)
+    cb.set_label("Ratio")
+    fig.savefig(f"{opath}/MCTF_msdpt_"+name+".png",)
+    fig.savefig(f"{opath}/MCTF_msdpt_"+name+".pdf",)
+    plt.clf()
+
+    # arrays for plotting pt vs rho                                          
+    rhos = np.linspace(-5.5,-2.,300)
+    ptpts, rhopts = np.meshgrid(pts[:-1] + 0.5*np.diff(pts), rhos[:-1] + 0.5 * np.diff(rhos), indexing='ij')
+    ptpts_scaled = (ptpts - 525.) / (1500. - 525.)
+    rhopts_scaled = (rhopts - (-5.5)) / ((-2.) - (-5.5))
+    validbins = (rhopts_scaled >= 0) & (rhopts_scaled <= 1)
+
+    ptpts = ptpts[validbins]
+    rhopts = rhopts[validbins]
+    ptpts_scaled = ptpts_scaled[validbins]
+    rhopts_scaled = rhopts_scaled[validbins]
+
+    tf_MCtempl_vals = tf_MCtempl(ptpts_scaled, rhopts_scaled, nominal=True)
+
+    df = pd.DataFrame([])
+    df['rho'] = rhopts.reshape(-1)
+    df['pt'] = ptpts.reshape(-1)
+    df['MCTF'] = tf_MCtempl_vals.reshape(-1)
+
+    fig, ax = plt.subplots()
+    h = ax.hist2d(x=df["rho"],y=df["pt"],weights=df["MCTF"],bins=(rhos,pts))
+    plt.xlabel("rho")
+    plt.ylabel("$p_{T}$ [GeV]")
+    cb = fig.colorbar(h[3],ax=ax)
+    cb.set_label("Ratio")
+    fig.savefig(f"{opath}/MCTF_rhopt_"+name+".png",)
+    fig.savefig(f"{opath}/MCTF_rhopt_"+name+".pdf",)
+
+    return
+
 
 def test_rhalphabet(tmpdir,sig):
     throwPoisson = False
@@ -81,7 +148,7 @@ def test_rhalphabet(tmpdir,sig):
     rhopts = 2 * np.log(msdpts / ptpts)
     ptscaled = (ptpts - 525.0) / (1500.0 - 525.0)
     rhoscaled = (rhopts - (-5.5)) / ((-2.) - (-5.5))
-    validbins = (rhoscaled >= 0) & (rhoscaled <= 1)
+    validbins = (rhoscaled > 0) & (rhoscaled < 1)
     rhoscaled[~validbins] = 1  # we will mask these out later
 
     # Build qcd MC pass+fail model and fit to polynomial
@@ -89,7 +156,7 @@ def test_rhalphabet(tmpdir,sig):
     qcdpass, qcdfail = 0.0, 0.0
 
 
-    df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/7Feb23-2prongarbitration-2/results/histograms.csv") 
+    df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/7Feb23-2prongarbitration-2/results/histograms.csv")
     for ptbin in range(npt):
         failCh = rl.Channel("ptbin%d%s" % (ptbin, "fail"))
         passCh = rl.Channel("ptbin%d%s" % (ptbin, "pass"))
@@ -110,6 +177,7 @@ def test_rhalphabet(tmpdir,sig):
     #print("qcdfail,qcdpass",qcdfail,",",qcdpass)
     #sys.exit()
     qcdeff = qcdpass / qcdfail
+    print(qcdeff)
     tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", poly_order, ["pt", "rho"], limits=(-10, 10))
     tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
     for ptbin in range(npt):
@@ -127,32 +195,38 @@ def test_rhalphabet(tmpdir,sig):
         failCh.mask = validbins[ptbin]
         passCh.mask = validbins[ptbin]
 
-    qcdfit_ws = ROOT.RooWorkspace("qcdfit_ws")
-    simpdf, obs = qcdmodel.renderRoofit(qcdfit_ws)
-    qcdfit = simpdf.fitTo(
-        obs,
-        ROOT.RooFit.Extended(True),
-        ROOT.RooFit.SumW2Error(True),
-        ROOT.RooFit.Strategy(2),
-        ROOT.RooFit.Save(),
-        ROOT.RooFit.Minimizer("Minuit2", "migrad"),
-        ROOT.RooFit.PrintLevel(-1),
-        ROOT.RooFit.Verbose(0),
-    )
-    qcdfit_ws.add(qcdfit)
-    if "pytest" not in sys.modules:
-        qcdfit_ws.writeToFile(os.path.join(str(tmpdir), "testModel_qcdfit.root"))
-    if qcdfit.status() != 0:
-        raise RuntimeError("Could not fit qcd")
-    #sys.exit()
-    param_names = [p.name for p in tf_MCtempl.parameters.reshape(-1)]
-    decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + "_deco", qcdfit, param_names)
-    tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
-    tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
+    if args.MCTF:
+        qcdfit_ws = ROOT.RooWorkspace("qcdfit_ws")
+        simpdf, obs = qcdmodel.renderRoofit(qcdfit_ws)
+        qcdfit = simpdf.fitTo(
+            obs,
+            ROOT.RooFit.Extended(True),
+            ROOT.RooFit.SumW2Error(True),
+            ROOT.RooFit.Strategy(2),
+            ROOT.RooFit.Save(),
+            ROOT.RooFit.Minimizer("Minuit2", "migrad"),
+            ROOT.RooFit.PrintLevel(-1),
+            ROOT.RooFit.Verbose(0),
+        )
+        qcdfit_ws.add(qcdfit)
+        if "pytest" not in sys.modules:
+            qcdfit_ws.writeToFile(os.path.join(str(tmpdir), "testModel_qcdfit.root"))
+        if qcdfit.status() != 0:
+            raise RuntimeError("Could not fit qcd")
+    
+        plot_mctf(tf_MCtempl,msdbins,"all")
+        #sys.exit()
+        param_names = [p.name for p in tf_MCtempl.parameters.reshape(-1)]
+        decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + "_deco", qcdfit, param_names)
+        tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
+        tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
     tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], limits=(-10, 10))
     tf_dataResidual_params = tf_dataResidual(ptscaled, rhoscaled)
-    tf_params = qcdeff * tf_MCtempl_params_final * tf_dataResidual_params
 
+    if args.MCTF:
+        tf_params = qcdeff * tf_MCtempl_params_final * tf_dataResidual_params
+    else:
+        tf_params = qcdeff * tf_dataResidual_params
     # build actual fit model now
     model = rl.Model(f"{sig}_model")
 
@@ -170,7 +244,7 @@ def test_rhalphabet(tmpdir,sig):
                 #"tt": (df[f"TTbar_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 #"wlnu": (df[f"WJetsToLNu_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 #"st": (df[f"SingleTop_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                #sig : (df[f"{short_to_long[sig]}_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                sig : (df[f"{short_to_long[sig]}_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 #"tqq": #gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
             }
             #print(templates["wqq"][0])
@@ -290,6 +364,7 @@ def test_rhalphabet(tmpdir,sig):
 
 
 if __name__ == "__main__":
+    global opath
     opath = f"{args.opath}_ipt{args.ipt}_irho{args.irho}"
     os.mkdir(opath)
     for sig in signals:

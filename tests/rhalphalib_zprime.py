@@ -14,6 +14,8 @@ rl.ParametericSample.PreferRooParametricHist = False
 
 parser = argparse.ArgumentParser(description='Rhalphalib setup.')
 parser.add_argument("--opath", action='store', type=str, required=True, help="Path to store output.")
+parser.add_argument("--ipt", action='store', type=int, required=True, help="TF pt order.")
+parser.add_argument("--irho", action='store', type=int, required=True, help="TF rho order.")
 parser.add_argument("--all_signals", action='store_true', help="Run on all signal templates.")
 args = parser.parse_args()
 
@@ -47,7 +49,7 @@ if args.all_signals:
 else:
     signals = ["m150"]
 
-poly_order = (1,1)
+poly_order = (args.ipt,args.irho)
 def expo_sample(norm, scale, obs):
     cdf = scipy.stats.expon.cdf(scale=scale, x=obs.binning) * norm
     return (np.diff(cdf), obs.binning, obs.name)
@@ -78,7 +80,7 @@ def test_rhalphabet(tmpdir,sig):
     ptpts, msdpts = np.meshgrid(ptbins[:-1] + 0.3 * np.diff(ptbins), msdbins[:-1] + 0.5 * np.diff(msdbins), indexing="ij")
     rhopts = 2 * np.log(msdpts / ptpts)
     ptscaled = (ptpts - 525.0) / (1500.0 - 525.0)
-    rhoscaled = (rhopts - (-5)) / ((-2.5) - (-5))
+    rhoscaled = (rhopts - (-5.5)) / ((-2.) - (-5.5))
     validbins = (rhoscaled >= 0) & (rhoscaled <= 1)
     rhoscaled[~validbins] = 1  # we will mask these out later
 
@@ -108,7 +110,7 @@ def test_rhalphabet(tmpdir,sig):
     #print("qcdfail,qcdpass",qcdfail,",",qcdpass)
     #sys.exit()
     qcdeff = qcdpass / qcdfail
-    tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", poly_order, ["pt", "rho"], limits=(0, 10))
+    tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", poly_order, ["pt", "rho"], limits=(-10, 10))
     tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
     for ptbin in range(npt):
         failCh = qcdmodel["ptbin%dfail" % ptbin]
@@ -147,7 +149,7 @@ def test_rhalphabet(tmpdir,sig):
     decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + "_deco", qcdfit, param_names)
     tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
     tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
-    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], limits=(0, 10))
+    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], limits=(-10, 10))
     tf_dataResidual_params = tf_dataResidual(ptscaled, rhoscaled)
     tf_params = qcdeff * tf_MCtempl_params_final * tf_dataResidual_params
 
@@ -163,12 +165,12 @@ def test_rhalphabet(tmpdir,sig):
             ptnorm = 1.0
             templates = {
                 #"qcd": (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),  
-                "wqq": (df[f"WJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),
-                "zqq": (df[f"ZJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                "tt": (df[f"TTbar_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                "wlnu": (df[f"WJetsToLNu_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                "st": (df[f"SingleTop_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                sig : (df[f"{short_to_long[sig]}_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                #"wqq": (df[f"WJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),
+                #"zqq": (df[f"ZJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                #"tt": (df[f"TTbar_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                #"wlnu": (df[f"WJetsToLNu_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                #"st": (df[f"SingleTop_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
+                #sig : (df[f"{short_to_long[sig]}_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
                 #"tqq": #gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
             }
             #print(templates["wqq"][0])
@@ -288,9 +290,10 @@ def test_rhalphabet(tmpdir,sig):
 
 
 if __name__ == "__main__":
-    os.mkdir(args.opath)
+    opath = f"{args.opath}_ipt{args.ipt}_irho{args.irho}"
+    os.mkdir(opath)
     for sig in signals:
-        opath = f"./{args.opath}/{sig}/"
+        opath = f"./{opath}/{sig}/"
         if os.path.exists(opath):
             raise RuntimeError(f"Path {opath} exists")
         else:

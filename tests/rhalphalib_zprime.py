@@ -69,7 +69,7 @@ def plot_mctf(tf_MCtempl, msdbins, name):
     # arrays for plotting pt vs msd                    
     pts = np.linspace(525,1200,300)
     ptpts, msdpts = np.meshgrid(pts[:-1] + 0.5 * np.diff(pts), msdbins[:-1] + 0.5 * np.diff(msdbins), indexing='ij')
-    ptpts_scaled = (ptpts - 525.) / (1500. - 525.)
+    ptpts_scaled = (ptpts - 525.) / (1200. - 525.)
     rhopts = 2*np.log(msdpts/ptpts)
 
     rhopts_scaled = (rhopts - (-5.5)) / ((-2.) - (-5.5))
@@ -126,6 +126,9 @@ def plot_mctf(tf_MCtempl, msdbins, name):
 
     return
 
+def get_templ(df, region, sample, ptbin, syst=None, muon=False, nowarn=False):
+    key = f"{sample}_msd_{region}_{ptbin}" 
+    return df[key].values(), df[key].axes[0].edges, "msd", df[key].variances()
 
 def test_rhalphabet(tmpdir,sig):
     throwPoisson = False
@@ -138,15 +141,19 @@ def test_rhalphabet(tmpdir,sig):
     tqqeffSF = rl.IndependentParameter("tqqeffSF", 1.0, 0, 10)
     tqqnormSF = rl.IndependentParameter("tqqnormSF", 1.0, 0, 10)
 
-    ptbins = np.array([525, 575, 625, 700, 800, 1500])
+    print("XXXX")
+    with open(f"/eos/project/c/contrast/public/cl/www/zprime/bamboo/7Feb23-2prongarbitration-2/results//histograms.pkl", "rb") as f:
+        df = pickle.load(f)
+    ptbins = np.array([525, 575, 625, 700, 800, 1200])
     npt = len(ptbins) - 1
-    msdbins = np.linspace(40, 400, 40)
+    #msdbins = np.linspace(40, 340, 31)
+    msdbins = df["QCD_msd_pass_0"].axes[0].edges#np.linspace(40, 340, 31)
     msd = rl.Observable("msd", msdbins)
 
     # here we derive these all at once with 2D array
     ptpts, msdpts = np.meshgrid(ptbins[:-1] + 0.3 * np.diff(ptbins), msdbins[:-1] + 0.5 * np.diff(msdbins), indexing="ij")
     rhopts = 2 * np.log(msdpts / ptpts)
-    ptscaled = (ptpts - 525.0) / (1500.0 - 525.0)
+    ptscaled = (ptpts - 525.0) / (1200.0 - 525.0)
     rhoscaled = (rhopts - (-5.5)) / ((-2.) - (-5.5))
     validbins = (rhoscaled > 0) & (rhoscaled < 1)
     rhoscaled[~validbins] = 1  # we will mask these out later
@@ -155,47 +162,43 @@ def test_rhalphabet(tmpdir,sig):
     qcdmodel = rl.Model("qcdmodel")
     qcdpass, qcdfail = 0.0, 0.0
 
-
-    df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/7Feb23-2prongarbitration-2/results/histograms.csv")
+    #df = pd.read_csv("/eos/project/c/contrast/public/cl/www/zprime/bamboo/7Feb23-2prongarbitration-2/results/histograms.pkl")
     for ptbin in range(npt):
         failCh = rl.Channel("ptbin%d%s" % (ptbin, "fail"))
         passCh = rl.Channel("ptbin%d%s" % (ptbin, "pass"))
         qcdmodel.addChannel(failCh)
         qcdmodel.addChannel(passCh)
-        # mock template
+        #QCD MC template
         ptnorm = 1
-        #print(ptbin,"pass",df[f"QCD_msd_pass_{ptbin}"].to_numpy(),)
-        #print(ptbin,"fail",df[f"QCD_msd_fail_{ptbin}"].to_numpy(),)
-        failTempl = (df[f"QCD_msd_fail_{ptbin}"].to_numpy(), msd.binning, "msd") #expo_sample(norm=ptnorm * 1e5, scale=40, obs=msd)
-        passTempl = (df[f"QCD_msd_pass_{ptbin}"].to_numpy(), msd.binning, "msd") #expo_sample(norm=ptnorm * 1e3, scale=40, obs=msd)
-        #print(
-        failCh.setObservation(failTempl)
-        passCh.setObservation(passTempl)
-        qcdfail += failCh.getObservation().sum()
-        qcdpass += passCh.getObservation().sum()
-
-    #print("qcdfail,qcdpass",qcdfail,",",qcdpass)
-    #sys.exit()
+        failTempl = get_templ(df, "fail", "QCD", ptbin)
+        passTempl = get_templ(df, "pass", "QCD", ptbin)
+        failCh.setObservation(failTempl,read_sumw2=True)
+        passCh.setObservation(passTempl,read_sumw2=True)
+        qcdfail += failCh.getObservation()[0].sum()
+        qcdpass += passCh.getObservation()[0].sum()
     qcdeff = qcdpass / qcdfail
-    print(qcdeff)
-    tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", poly_order, ["pt", "rho"], limits=(-10, 10))
-    tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
-    for ptbin in range(npt):
-        failCh = qcdmodel["ptbin%dfail" % ptbin]
-        passCh = qcdmodel["ptbin%dpass" % ptbin]
-        failObs = failCh.getObservation()
-        qcdparams = np.array([rl.IndependentParameter("qcdparam_ptbin%d_msdbin%d" % (ptbin, i), 0) for i in range(msd.nbins)])
-        sigmascale = 10.0
-        scaledparams = failObs * (1 + sigmascale / np.maximum(1.0, np.sqrt(failObs))) ** qcdparams
-        fail_qcd = rl.ParametericSample("ptbin%dfail_qcd" % ptbin, rl.Sample.BACKGROUND, msd, scaledparams)
-        failCh.addSample(fail_qcd)
-        pass_qcd = rl.TransferFactorSample("ptbin%dpass_qcd" % ptbin, rl.Sample.BACKGROUND, tf_MCtempl_params[ptbin, :], fail_qcd)
-        passCh.addSample(pass_qcd)
-
-        failCh.mask = validbins[ptbin]
-        passCh.mask = validbins[ptbin]
-
+    degs = tuple([int(s) for s in [args.ipt, args.irho]])
     if args.MCTF:
+        _inits = np.ones(tuple(n + 1 for n in degs))
+
+        tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", poly_order, ["pt", "rho"],init_params=_inits, limits=(0, 10))
+        tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
+        for ptbin in range(npt):
+            failCh = qcdmodel["ptbin%dfail" % ptbin]
+            passCh = qcdmodel["ptbin%dpass" % ptbin]
+            failObs = failCh.getObservation()[0]
+            qcdparams = np.array([rl.IndependentParameter("qcdparam_ptbin%d_msdbin%d" % (ptbin, i), 0) for i in range(msd.nbins)])
+            sigmascale = 10.0
+            qcdparams = qcdparams.squeeze()
+            scaledparams = failObs * (1 + sigmascale / np.maximum(1.0, np.sqrt(failObs))) ** qcdparams
+            fail_qcd = rl.ParametericSample("ptbin%dfail_qcd" % ptbin, rl.Sample.BACKGROUND, msd, scaledparams)
+            failCh.addSample(fail_qcd)
+            pass_qcd = rl.TransferFactorSample("ptbin%dpass_qcd" % ptbin, rl.Sample.BACKGROUND, tf_MCtempl_params[ptbin, :], fail_qcd)
+            passCh.addSample(pass_qcd)
+    
+            failCh.mask = validbins[ptbin]
+            passCh.mask = validbins[ptbin]
+
         qcdfit_ws = ROOT.RooWorkspace("qcdfit_ws")
         simpdf, obs = qcdmodel.renderRoofit(qcdfit_ws)
         qcdfit = simpdf.fitTo(
@@ -215,18 +218,20 @@ def test_rhalphabet(tmpdir,sig):
             raise RuntimeError("Could not fit qcd")
     
         plot_mctf(tf_MCtempl,msdbins,"all")
-        #sys.exit()
         param_names = [p.name for p in tf_MCtempl.parameters.reshape(-1)]
         decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + "_deco", qcdfit, param_names)
         tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
         tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
-    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], limits=(-10, 10))
+
+    _inits = np.ones(tuple(n + 1 for n in degs))
+    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], init_params=_inits, limits=(0, 10))
     tf_dataResidual_params = tf_dataResidual(ptscaled, rhoscaled)
 
     if args.MCTF:
         tf_params = qcdeff * tf_MCtempl_params_final * tf_dataResidual_params
     else:
         tf_params = qcdeff * tf_dataResidual_params
+
     # build actual fit model now
     model = rl.Model(f"{sig}_model")
 
@@ -237,18 +242,10 @@ def test_rhalphabet(tmpdir,sig):
 
             isPass = region == "pass"
             ptnorm = 1.0
+            #for now, consider only one other template (signal)
             templates = {
-                #"qcd": (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),  
-                #"wqq": (df[f"WJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"),
-                #"zqq": (df[f"ZJetsToQQ_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                #"tt": (df[f"TTbar_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                #"wlnu": (df[f"WJetsToLNu_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                #"st": (df[f"SingleTop_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                sig : (df[f"{short_to_long[sig]}_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd"), 
-                #"tqq": #gaus_sample(norm=ptnorm * (40 if isPass else 80), loc=150, scale=20, obs=msd),
+                sig : get_templ(df,region, short_to_long[sig], ptbin),
             }
-            #print(templates["wqq"][0])
-            #for sName in ["zqq", "wqq", "m50"]:
             for sName in templates.keys():
                 print(short_to_long[sName])
                 # some mock expectations
@@ -263,26 +260,21 @@ def test_rhalphabet(tmpdir,sig):
 
                 # for jec we set lnN prior, shape will automatically be converted to norm systematic
                 # sample.setParamEffect(jec, jecup_ratio)
-                print("nominal",df[f"{short_to_long[sName]}_msd_{region}_{ptbin}"].to_numpy())
-                for sys_name, sys_val in sys_shape_dict.items():
-                    up   = df[f"{short_to_long[sName]}_msd_{sys_name}Up_{region}_{ptbin}"].to_numpy()
-                    down = df[f"{short_to_long[sName]}_msd_{sys_name}Down_{region}_{ptbin}"].to_numpy()
-                    print(sys_name, sys_val, )#
-                    print("up",up)
-                    print("down",down) 
-                    sample.setParamEffect(sys_val, up, down)
+                #for sys_name, sys_val in sys_shape_dict.items():
+                #    up   = df[f"{short_to_long[sName]}_msd_{sys_name}Up_{region}_{ptbin}"].to_numpy()
+                #    down = df[f"{short_to_long[sName]}_msd_{sys_name}Down_{region}_{ptbin}"].to_numpy()
+                #    sample.setParamEffect(sys_val, up, down)
 
                 #sample.setParamEffect(lumi, 1.027)
 
                 ch.addSample(sample)
 
-            templates["qcd"] = (df[f"QCD_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd")
- 
-            yields = sum(tpl[0] for itpl, tpl in templates.items() if sig not in itpl)
+            #yields = sum(tpl[0] for itpl, tpl in templates.items() if sig not in itpl)
             if throwPoisson:
                 yields = np.random.poisson(yields)
             #data_obs = (yields, msd.binning, msd.name)
-            data_obs = (df[f"data_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd") #(yields, msd.binning, msd.name)
+            #data_obs = (df[f"data_msd_{region}_{ptbin}"].to_numpy(), msd.binning, "msd") #(yields, msd.binning, msd.name)
+            data_obs = get_templ(df,region, "data", ptbin)[:-1]
             ch.setObservation(data_obs)
 
             # drop bins outside rho validity
@@ -308,6 +300,7 @@ def test_rhalphabet(tmpdir,sig):
         pass_qcd = rl.TransferFactorSample("ptbin%dpass_qcd" % ptbin, rl.Sample.BACKGROUND, tf_params[ptbin, :], fail_qcd)
         passCh.addSample(pass_qcd)
 
+        #To add
         #tqqpass = passCh["tqq"]
         #tqqfail = failCh["tqq"]
         #tqqPF = tqqpass.getExpectation(nominal=True).sum() / tqqfail.getExpectation(nominal=True).sum()
@@ -316,6 +309,7 @@ def test_rhalphabet(tmpdir,sig):
         #tqqpass.setParamEffect(tqqnormSF, 1 * tqqnormSF)
         #tqqfail.setParamEffect(tqqnormSF, 1 * tqqnormSF)
 
+    #To add
     '''
     # Fill in muon CR
     for region in ["pass", "fail"]:

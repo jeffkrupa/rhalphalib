@@ -18,7 +18,7 @@ def _to_numpy(hinput, read_sumw2=False):
         if read_sumw2 and hinput[3].size != hinput[1].size - 1:
             raise ValueError("Sumw2 array and binning array are incompatible in tuple {}".format(hinput))
         return hinput
-    elif "<class 'ROOT.TH1" in str(type(hinput)):
+    elif "TH1" in str(type(hinput)):
         sumw = np.zeros(hinput.GetNbinsX())
         sumw2 = np.zeros(hinput.GetNbinsX())
         binning = np.zeros(sumw.size + 1)

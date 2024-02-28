@@ -9,7 +9,9 @@ import ROOT
 import json
 import pandas as pd
 import argparse
+import uproot
 from array import array
+from rhalphalib import AffineMorphTemplate, MorphHistW2
 rl.util.install_roofit_helpers()
 #rl.ParametericSample.PreferRooParametricHist = False
 
@@ -17,10 +19,15 @@ parser = argparse.ArgumentParser(description='Rhalphalib setup.')
 parser.add_argument("--opath", action='store', type=str, required=True, help="Path to store output.")
 parser.add_argument("--ipt", action='store', type=int, required=True, help="TF pt order.")
 parser.add_argument("--irho", action='store', type=int, required=True, help="TF rho order.")
+parser.add_argument("--iptMC", action='store', type=int, required=False, help="MCTF pt order.")
+parser.add_argument("--irhoMC", action='store', type=int, required=False, help="MCTF rho order.")
 parser.add_argument("--tagger", action='store', type=str, required=True, help="Tagger name to cut, for example pnmd2prong_ddt.")
 parser.add_argument("--pickle", action='store', type=str, required=False, help="Path to pickle holding templates.")
-parser.add_argument("--root_path", action='store', type=str, required=True, help="Path to ROOT holding templates.")
+parser.add_argument("--sigmass", action='store', type=str, required=False, default="150",help="mass point like 150.")
+#parser.add_argument("--root_path", action='store', type=str, required=True, help="Path to ROOT holding templates.")
+parser.add_argument("--root_file", action='store', type=str, required=True, help="Path to ROOT holding templates.")
 parser.add_argument("--all_signals", action='store_true', help="Run on all signal templates.")
+parser.add_argument("--ftest", action='store_true', default=False, help="Run ftest.")
 parser.add_argument("--MCTF", action='store_true', help="Prefit the TF params to MC.")
 parser.add_argument("--do_systematics", action='store_true', help="Include systematics.")
 parser.add_argument("--is_blinded", action='store_true', help="Run on 10pct dataset.")
@@ -31,15 +38,42 @@ tagger = args.tagger
 SF = {
     "2017" :  {
         "V_SF" : 0.896,
-        "V_SF_err" : 0.065,
-        "shift_SF" : 0.99,
-        "shift_SF_err" : 0.004, 
+        "V_SF_ERR" : 0.065,
+        "SHIFT_SF" : 0.99,
+        "SHIFT_SF_ERR" : 0.004, 
     }
 }
 
 lumi_dict = {
     "2017" : 41100
 }
+
+lumi_dict_unc = {
+    "2016": 1.01,
+    "2017": 1.02,
+    "2018": 1.015,
+}
+lumi_correlated_dict_unc = {
+    "2016": 1.006,
+    "2017": 1.009,
+    "2018": 1.02,
+}
+lumi_1718_dict_unc = {
+    "2017": 1.006,
+    "2018": 1.002,
+}
+
+def smass(sName):
+    if 'hbb' in sName:
+        _mass = 135.
+    elif sName in ['wqq', 'tt', 'st',]:
+        _mass = 90.
+    elif sName in ['zqq', 'zcc', 'zbb']:
+        _mass = 100.
+    else:
+        raise ValueError("DAFUQ is {}".format(sName))
+    return _mass
+
 
 with open("xsec.json") as f:
     xsec_dict = json.load(f)
@@ -89,6 +123,10 @@ sample_maps = {
     "wqq" : ["WJetsToQQ_HT-600to800","WJetsToQQ_HT-800toInf"],
     "zqq" : ["ZJetsToQQ_HT-600to800","ZJetsToQQ_HT-800toInf"],
     "tt"  : ["TTTo2L2Nu","TTToHadronic","TTToSemiLeptonic"],
+    "dy"  : ["DYJetsToLL_Pt-200To400","DYJetsToLL_Pt-400To600","DYJetsToLL_Pt-600To800","DYJetsToLL_Pt-800To1200","DYJetsToLL_Pt-1200To2500"],
+    "st"  : ["ST_tW_antitop_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8","ST_tW_top_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8","ST_t-channel_antitop_4f_InclusiveDecays_TuneCP5_13TeV-powheg-madspin-pythia8","ST_t-channel_top_4f_InclusiveDecays_TuneCP5_13TeV-powheg-madspin-pythia8"],
+    "hbb" : ["GluGluHToBB"],
+    "wlnu" : ["WJetsToLNu_HT200to400","WJetsToLNu_HT400to600","WJetsToLNu_HT600to800","WJetsToLNu_HT800to1200","WJetsToLNu_HT1200to2500","WJetsToLNu_HT2500toInf"],
     "JetHT_2017" : ["JetHT_Run2017B","JetHT_Run2017C","JetHT_Run2017D","JetHT_Run2017E","JetHT_Run2017F"], 
     "VectorZPrimeToQQ_M50" : ["VectorZPrimeToQQ_M50"],
     "VectorZPrimeToQQ_M75" : ["VectorZPrimeToQQ_M75"],
@@ -103,7 +141,7 @@ sample_maps = {
 if args.all_signals:
     signals = ["m50","m75","m100","m125","m150","m200","m250",]
 else:
-    signals = ["m150"]
+    signals = ["m"+args.sigmass]
 
 poly_order = (args.ipt,args.irho)
 def expo_sample(norm, scale, obs):
@@ -114,6 +152,8 @@ def expo_sample(norm, scale, obs):
 def gaus_sample(norm, loc, scale, obs):
     cdf = scipy.stats.norm.cdf(loc=loc, scale=scale, x=obs.binning) * norm
     return (np.diff(cdf), obs.binning, obs.name)
+
+
 
 def plot_mctf(tf_MCtempl, msdbins, name):
     """
@@ -148,8 +188,8 @@ def plot_mctf(tf_MCtempl, msdbins, name):
     plt.ylabel("$p_{T}$ [GeV]")
     cb = fig.colorbar(h[3],ax=ax)
     cb.set_label("Ratio")
-    fig.savefig(f"{opath}/MCTF_msdpt_"+name+".png",)
-    fig.savefig(f"{opath}/MCTF_msdpt_"+name+".pdf",)
+    fig.savefig(f"{opath}/MCTF_msdpt_"+name+".png")
+    fig.savefig(f"{opath}/MCTF_msdpt_"+name+".pdf")
     plt.clf()
 
     # arrays for plotting pt vs rho                                          
@@ -184,46 +224,114 @@ def plot_mctf(tf_MCtempl, msdbins, name):
 
 def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017"):
 
-    def get_factor(f,subsample):
-        factor = 0.
-        tree = f.Get("Runs")
-        genEventSumw_buffer = array('d',[0.0]) 
-        tree.SetBranchAddress("genEventSumw",genEventSumw_buffer)
-        sum_genEventSumw = 0.
-        for entry in range(tree.GetEntries()):
-            tree.GetEntry(entry)
-            sum_genEventSumw += genEventSumw_buffer[0]
+    hist_str = f"SR_{sample}_ptbin{ptbin}_{tagger}_{region}"
+    if syst is not None:
+        hist_str = hist_str +"__"+syst
+    #print(hist_str)
+    with uproot.open(args.root_file) as f:
+        #print(f.keys())
+        hist = f[hist_str]
+    return (hist.values(), hist.axis().edges(), "msd", hist.variances())
+#'''
+#def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017"):
+#
+#    def get_factor(f,subsample):
+#        factor = 0.
+#        tree = f.Get("Runs")
+#        genEventSumw_buffer = array('d',[0.0]) 
+#        tree.SetBranchAddress("genEventSumw",genEventSumw_buffer)
+#        sum_genEventSumw = 0.
+#        for entry in range(tree.GetEntries()):
+#            tree.GetEntry(entry)
+#            sum_genEventSumw += genEventSumw_buffer[0]
+#
+#        lumi = lumi_dict[year]
+#        if args.is_blinded:
+#            lumi /= 10.
+#        xsec = xsec_dict[subsample]
+#        if sum_genEventSumw > 0.:
+#            factor = xsec*lumi/sum_genEventSumw
+#        else:
+#            raise RuntimeError(f"Factor for sample {subsample} <= 0")
+#        return factor 
+#
+#    master_hist = None
+#    
+#    hist_str = f"SR_ptbin{ptbin}_{tagger}_{region}"
+#    if syst is not None:
+#        hist_str += f"__{syst}"
+#    file0 = ROOT.TFile(f"{args.root_path}/{sample_maps[sample][0]}.root", "READ")
+#    hist0 = file0.Get(hist_str)
+#    ofile_path = f"{opath}/f{hist_str}_output_file.root"
+#    output_file = ROOT.TFile(ofile_path, "RECREATE")
+#    master_hist = hist0.Clone("msd")
+#    master_hist.Reset()
+#
+#    for subsample in sample_maps[sample]:
+#        file = ROOT.TFile(f"{args.root_path}/{subsample}.root")
+#        hist = file.Get(hist_str)
+#        if "JetHT" not in subsample:
+#            factor = get_factor(file,subsample)
+#            hist.Scale(factor)
+#        master_hist.Add(hist)  # Add to master, uncertainties are handled automatically
+#        file.Close()
+#
+#    master_hist.SetTitle("msd;msd;;")
+#    output_file.cd()
+#    master_hist.Write()
+#    output_file.Close()
+#    file0.Close()
+#    return master_hist,ofile_path
+#'''
+def th1_to_numpy(path,label="msd"):
+    with uproot.open(path) as file:
+        th1d = file[label]
+        _hist, _ = th1d.to_numpy()
+    return _hist
 
-        lumi = lumi_dict[year]
-        if args.is_blinded:
-            lumi /= 10.
-        xsec = xsec_dict[subsample]
-        if sum_genEventSumw > 0.:
-            factor = xsec*lumi/sum_genEventSumw
+def shape_to_num(region, sName, ptbin, syst_down_up, mask, muon=False, bound=0.5, inflate=False):
+    #print(sName)
+    _nom = get_templ(region, sName, ptbin, tagger)
+    #_nom = th1_to_numpy(path)
+
+
+    #if template is very small don't add unc
+    if _nom[0] is None:
+        return None
+    _nom_rate = np.sum(_nom[0] * mask)
+    if _nom_rate < .1:
+        return 1.0
+    #ignore one sided for now
+    _one_side = None #get_templ(f, region, sName, ptbin, syst=syst, muon=muon, nowarn=True)
+    _up = get_templ(region, sName, ptbin, tagger, syst=syst_down_up[1], muon=muon, nowarn=True)
+
+    #_up = th1_to_numpy(path)
+
+    _down = get_templ(region, sName, ptbin, tagger, syst=syst_down_up[0], muon=muon, nowarn=True)
+    #_down = th1_to_numpy(path)
+    if _up is None and _down is None and _one_side is None:
+        return None
+    else:
+        if _one_side is not None:
+            _up_rate = np.sum(_one_side[0] * mask)
+            _diff = np.abs(_up_rate - _nom_rate)
+            magnitude = _diff / _nom_rate
+        elif _down[0] is not None and _up[0] is not None:
+            _up_rate = np.sum(_up[0] * mask)
+            _down_rate = np.sum(_down[0] * mask)
+            #print("_up_rate",_up_rate)
+            #print("_down_rate",_down_rate)
+            _diff = np.abs(_up_rate - _nom_rate) + np.abs(_down_rate - _nom_rate)
+            magnitude = _diff / (2. * _nom_rate)
         else:
-            raise RuntimeError(f"Factor for sample {subsample} <= 0")
-        return factor 
-
-    master_hist = None
-    
-    hist_str = f"SR_ptbin{ptbin}_{tagger}_{region}"
-    file0 = ROOT.TFile(f"{args.root_path}/{sample_maps[sample][0]}.root", "READ")
-    hist0 = file0.Get(hist_str)
-    master_hist = hist0.Clone("msd")
-    master_hist.Reset()
-
-    for subsample in sample_maps[sample]:
-        file = ROOT.TFile(f"{args.root_path}/{subsample}.root")
-        hist = file.Get(hist_str)
-        if "JetHT" not in subsample:
-            factor = get_factor(file,subsample)
-            hist.Scale(factor)
-        master_hist.Add(hist)  # Add to master, uncertainties are handled automatically
-        file.Close()
-
-    master_hist.SetTitle("msd;msd;;")
-    file0.Close()
-    return master_hist
+            raise NotImplementedError
+    if bound is not None:
+        magnitude = min(magnitude, bound)
+    #inflate uncs while debugging what went wrong
+    if inflate: 
+        magnitude *= 10 
+    #print(magnitude)
+    return 1.0 + magnitude
 
 def test_rhalphabet(tmpdir,sig):
     throwPoisson = False
@@ -235,32 +343,36 @@ def test_rhalphabet(tmpdir,sig):
     #don't have UES for now
     sys_shape_dict['UES'] = rl.NuisanceParameter('CMS_ues_j_{}'.format(args.year), sys_types['UES'])
     sys_shape_dict['jet_trigger'] = rl.NuisanceParameter('CMS_trigger_{}'.format(args.year), sys_types['jet_trigger'])
+    sys_shape_dict['L1Prefiring'] = rl.NuisanceParameter('CMS_L1prefire_{}'.format(args.year), sys_types['L1Prefiring'])
 
+    sys_shape_dict['pileup_weight'] = rl.NuisanceParameter('CMS_PU_{}'.format(args.year), sys_types['pileup_weight'])
+    #don't have HEM for now
+    sys_shape_dict['HEM18'] = rl.NuisanceParameter('CMS_HEM_{}'.format(args.year), sys_types['HEM18'])
     #don't have mu for now
     sys_shape_dict['mu_trigger'] = rl.NuisanceParameter('CMS_mu_trigger_{}'.format(args.year), sys_types['mu_trigger'])
     sys_shape_dict['mu_isoweight'] = rl.NuisanceParameter('CMS_mu_isoweight_{}'.format(args.year), sys_types['mu_isoweight'])
     sys_shape_dict['mu_idweight'] = rl.NuisanceParameter('CMS_mu_idweight_{}'.format(args.year), sys_types['mu_idweight'])
-    sys_shape_dict['pileup_weight'] = rl.NuisanceParameter('CMS_PU_{}'.format(args.year), sys_types['pileup_weight'])
-    #don't have HEM for now
-    sys_shape_dict['HEM18'] = rl.NuisanceParameter('CMS_HEM_{}'.format(args.year), sys_types['HEM18'])
-    sys_shape_dict['L1Prefiring'] = rl.NuisanceParameter('CMS_L1prefire_{}'.format(args.year), sys_types['L1Prefiring'])
     #sys_shape_dict['scalevar_7pt'] = rl.NuisanceParameter('CMS_th_scale7pt', sys_types['scalevar_7pt'])
     #sys_shape_dict['scalevar_3pt'] = rl.NuisanceParameter('CMS_th_scale3pt', sys_types['scalevar_3pt']) 
 
-    sys_eleveto = rl.NuisanceParameter('CMS_gghcc_e_veto_{}'.format(args.year), 'lnN')
-    sys_muveto = rl.NuisanceParameter('CMS_gghcc_m_veto_{}'.format(args.year), 'lnN')
-    sys_tauveto = rl.NuisanceParameter('CMS_gghcc_tau_veto_{}'.format(args.year), 'lnN')
+    sys_eleveto = rl.NuisanceParameter('CMS_e_veto_{}'.format(args.year), 'lnN')
+    sys_muveto = rl.NuisanceParameter('CMS_m_veto_{}'.format(args.year), 'lnN')
+    sys_tauveto = rl.NuisanceParameter('CMS_tau_veto_{}'.format(args.year), 'lnN')
 
-    sys_veff = rl.NuisanceParameter('CMS_gghcc_veff_{}'.format(args.year), 'lnN')
+    sys_veff = rl.NuisanceParameter('CMS_veff_{}'.format(args.year), 'lnN')
 
-    lumi = rl.NuisanceParameter("CMS_lumi", "lnN")
+    sys_lumi = rl.NuisanceParameter("CMS_lumi", "lnN")
+    sys_lumi_correlated = rl.NuisanceParameter('CMS_lumi_13TeV_correlated', 'lnN')
+    sys_lumi_1718 = rl.NuisanceParameter('CMS_lumi_13TeV_1718', 'lnN')
+
+
     tqqeffSF = rl.IndependentParameter("tqqeffSF", 1.0, 0, 10)
     tqqnormSF = rl.IndependentParameter("tqqnormSF", 1.0, 0, 10)
     #with open(args.pickle, "rb") as f:
     #    df = pickle.load(f)
     ptbins = np.array([525, 575, 625, 700, 800, 1200])
     npt = len(ptbins) - 1
-    msdbins = np.linspace(30,350,65)
+    msdbins = np.linspace(40,350,63)
     msd = rl.Observable("msd", msdbins)
 
     # here we derive these all at once with 2D array
@@ -293,11 +405,17 @@ def test_rhalphabet(tmpdir,sig):
         qcdfail += failCh.getObservation()[0].sum()
         qcdpass += passCh.getObservation()[0].sum()
     qcdeff = qcdpass / qcdfail
-    degs = tuple([int(s) for s in [args.ipt, args.irho]])
     if args.MCTF:
-        _inits = np.ones(tuple(n + 1 for n in degs))
+        degsMC = tuple([int(s) for s in [args.iptMC, args.irhoMC]])
 
-        tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", (1,1) , ["pt", "rho"],init_params=_inits, limits=(0, 10))
+        _initsMC = np.ones(tuple(n + 1 for n in degsMC))
+
+        tf_MCtempl = rl.BasisPoly(f"tf{args.year}_MCtempl",
+                                      degsMC, ['pt', 'rho'], basis="Bernstein",
+                                      init_params = _initsMC,
+                                      limits=(0, 10), coefficient_transform=None
+        )
+        #tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", (1,1) , ["pt", "rho"],init_params=_inits, limits=(0, 10))
         tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
         for ptbin in range(npt):
             failCh = qcdmodel["ptbin%dfail" % ptbin]
@@ -320,7 +438,7 @@ def test_rhalphabet(tmpdir,sig):
             obs,
             ROOT.RooFit.Extended(True),
             ROOT.RooFit.SumW2Error(True),
-            ROOT.RooFit.Strategy(0),
+            ROOT.RooFit.Strategy(1),
             ROOT.RooFit.Save(),
             ROOT.RooFit.Minimizer("Minuit2", "migrad"),
             ROOT.RooFit.PrintLevel(-1),
@@ -346,8 +464,12 @@ def test_rhalphabet(tmpdir,sig):
         tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
         tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
 
+    degs = tuple([int(s) for s in [args.ipt, args.irho]])
     _inits = np.ones(tuple(n + 1 for n in degs))
-    tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], init_params=_inits, limits=(0, 10))
+    tf_dataResidual = rl.BasisPoly(f"tf{args.year}_dataResidual",
+                                       degs, ['pt', 'rho'], basis='Bernstein', init_params=_inits,
+                                       limits=(0, 10), coefficient_transform=None)
+    #tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], init_params=_inits, limits=(0, 10))
     tf_dataResidual_params = tf_dataResidual(ptscaled, rhoscaled)
 
     if args.MCTF:
@@ -366,34 +488,91 @@ def test_rhalphabet(tmpdir,sig):
             isPass = region == "pass"
             ptnorm = 1.0
 
-            #for now, consider only one other template (signal)
             templates = {
-                "wqq" : get_templ(region, "wqq", ptbin, tagger),
-                "zqq" : get_templ(region, "zqq", ptbin, tagger),
-                "tt" : get_templ(region, "tt", ptbin, tagger),
-                sig   : get_templ(region, short_to_long[sig], ptbin, tagger),
-            }
+                "wqq"  : get_templ(region, "wqq", ptbin, tagger),
+                "zqq"  : get_templ(region, "zqq", ptbin, tagger),
+                "tt"   : get_templ(region, "tt", ptbin, tagger),
+                "wlnu" : get_templ(region, "wlnu", ptbin, tagger),
+                "dy"   : get_templ(region, "dy", ptbin, tagger),
+                "st"   : get_templ(region, "st", ptbin, tagger),
+                "hbb"  : get_templ(region, "hbb", ptbin, tagger),  
+            } 
+            if not args.ftest:
+                templates[sig] = get_templ(region, short_to_long[sig], ptbin, tagger)
+            mask = validbins[ptbin].copy()
             for sName in templates.keys():
                 # some mock expectations
                 templ = templates[sName]
-                stype = rl.Sample.SIGNAL if sName == sig else rl.Sample.BACKGROUND
+                if args.ftest:
+                    stype = rl.Sample.SIGNAL if sName == "zqq" else rl.Sample.BACKGROUND
+                else:
+                    stype = rl.Sample.SIGNAL if sName == sig else rl.Sample.BACKGROUND
                 sample = rl.TemplateSample(ch.name + "_" + sName, stype, templ)
 
+
+                def smorph(templ, sName):
+                    if templ is None:
+                        return None
+                    if sName not in ['qcd', 'dy', 'wlnu', 'tt', 'st']:
+                        return MorphHistW2(templ).get(shift=SF[args.year]['shift_SF'] * smass(sName),
+                                                      #smear=SF[year]['smear_SF']
+                                                      )
+                    else:
+                        return templ
+                ##https://github.com/nsmith-/rhalphalib/blob/master/rhalphalib/template_morph.py#L45-L58 how do i do this on ROOT templates?
+                #templ = smorph(templ, sName)
                 # sample.setParamEffect(jec, jecup_ratio)
                 if args.do_systematics:
-                    for sys_name, sys_val in sys_shape_dict.items():
-                        up   = df[f"{short_to_long[sName]}_msd_{sys_name}Up_{region}_{ptbin}"].to_numpy()
-                        down = df[f"{short_to_long[sName]}_msd_{sys_name}Down_{region}_{ptbin}"].to_numpy()
-                        sample.setParamEffect(sys_val, up, down)
-    
-                sample.setParamEffect(lumi, 1.027)
+
+                    sample.setParamEffect(sys_lumi, lumi_dict_unc[args.year])
+                    sample.setParamEffect(sys_lumi_correlated, lumi_correlated_dict_unc[args.year])
+                    if args.year != '2016':
+                        sample.setParamEffect(sys_lumi_1718, lumi_1718_dict_unc[args.year])
+                    sample.setParamEffect(sys_eleveto, 1.005)
+                    sample.setParamEffect(sys_muveto, 1.005)
+                    sample.setParamEffect(sys_tauveto, 1.005)
+
+                    sample.autoMCStats(lnN=True)
+
+                    sys_names = [
+                        'JES', 'JER', 'jet_trigger','pileup_weight','L1Prefiring',
+                        #'Z_d2kappa_EW', 'Z_d3kappa_EW', 'd1kappa_EW', 'd1K_NLO', 'd2K_NLO', 'd3K_NLO',
+                        #'scalevar_7pt', 'scalevar_3pt',
+                        #'UES','btagEffStat', 'btagWeight',
+                    ]
+                    sys_name_updown = {
+                        'JES' : ["jesTotaldown","jesTotalup"], 'JER' : ["jerdown","jerup"], 'pileup_weight' : ["pudown","puup"], 'jet_trigger' : ["stat_dn","stat_up"], 'L1Prefiring' : ["L1PreFiringup","L1PreFiringdown"],
+                    }
+                    if stype == rl.Sample.SIGNAL and not args.ftest: 
+                        sName = short_to_long[sName]
+                    for sys_name in sys_names:
+                        if (("NLO" in sys_name) or ("EW" in sys_name)) and not sName in ['zqq', 'wqq']:
+                            continue
+                        if ("Z_d" in sys_name) and sName not in ['zqq']:
+                            continue
+                        if sys_shape_dict[sys_name].combinePrior == "lnN":
+                            _sys_ef = shape_to_num(region, sName, ptbin,
+                                                    sys_name_updown[sys_name], mask, bound=None if 'scalevar' not in sys_name else 0.25,inflate=True)
+                            if _sys_ef is None:
+                                continue
+                            sample.setParamEffect(sys_shape_dict[sys_name], _sys_ef)
+
+                    if sName not in ["qcd", 'dy', 'wlnu','tt','st',]:
+                        sample.scale(SF[args.year]['V_SF'])
+                        sample.setParamEffect( sys_veff, 1.0 + SF[args.year]['V_SF_ERR'] / SF[args.year]['V_SF'])
+                    ###SFs complicated by high-purity bb region...fully insitu using Zbb?
+
+                else:
+                    sample.setParamEffect(sys_lumi, lumi_dict_unc[args.year])
+
 
                 ch.addSample(sample)
+                 
 
             if throwPoisson:
                 yields = np.random.poisson(yields)
             data_obs = get_templ(region, f"JetHT_2017", ptbin, tagger)
-            ch.setObservation(data_obs)
+            ch.setObservation(data_obs[0:3])
 
             # drop bins outside rho validity
             validbins[ptbin][0:2] = False
@@ -472,6 +651,17 @@ def test_rhalphabet(tmpdir,sig):
         pickle.dump(model, fout)
 
     model.renderCombine(os.path.join(str(tmpdir), f"{sig}_model"))
+
+    conf_dict = vars(args)
+    conf_dict['nbins'] = float(np.sum(validbins))
+    print(conf_dict)
+    import json
+    # Serialize data into file:
+    json.dump(conf_dict,
+              open("{}/config.json".format(f"{tmpdir}/{sig}_model",), 'w'),
+              sort_keys=True,
+              indent=4,
+              separators=(',', ': '))
 
 
 

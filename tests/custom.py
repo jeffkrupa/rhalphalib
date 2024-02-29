@@ -116,6 +116,7 @@ def FTest(seed=1, base=False, gen=False, fits=False, args=None, mc=True):
     if fits:
         command = ("combineTool.py -M GoodnessOfFit  --algo saturated --cminDefaultMinimizerStrategy 0 " 
             #" --snapshotName MultiDimFit --bypassFrequentistFit " 
+            " --toysFrequentist "
             " -n .BaseToys " 
             " -t {t} --seed {s} " 
             " --toysFile higgsCombineToys.GenerateOnly.mH120.{s}.root " 
@@ -127,7 +128,8 @@ def FTest(seed=1, base=False, gen=False, fits=False, args=None, mc=True):
         exec_bash(command, debug)
 
         command = ("combineTool.py -M GoodnessOfFit  --algo saturated --cminDefaultMinimizerStrategy 0 " 
-            " --snapshotName MultiDimFit --bypassFrequentistFit " 
+            #" --snapshotName MultiDimFit --bypassFrequentistFit " 
+            " --toysFrequentist "
             " -n .AltToys " 
             " -t {t} --seed {s} " 
             " --toysFile higgsCombineToys.GenerateOnly.mH120.{s}.root " 

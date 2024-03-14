@@ -117,22 +117,31 @@ def fplot(fvals, f_data, ref, alt, year=2017, nbins=130, savename=None, mc=False
         fig.savefig('{}.png'.format(savename), dpi=300, transparent=True, bbox_inches='tight')
     
 
-def prep_data(infile, reg):
-    prefit_qcd = infile['shapes_prefit/{}/qcd'.format(reg)].values
-    postfit_qcd = infile['shapes_fit_s/{}/qcd'.format(reg)].values
-    data = infile['shapes_fit_s/{}/data'.format(reg)].yvalues
-    bins = infile['shapes_prefit/{}/qcd'.format(reg)].edges
-    centers = infile['shapes_fit_s/{}/data'.format(reg)].xvalues
-    return data, prefit_qcd, postfit_qcd, bins, centers
+def prep_data(infile, reg, mc,year):
+
+    
+    prefit_qcd = infile['shapes_prefit/{}/{}_qcd'.format(reg,year)].values()
+    prefit_qcd_err = infile['shapes_prefit/{}/total_background'.format(reg,)].variances()
+    postfit_qcd = infile['shapes_fit_s/{}/{}_qcd'.format(reg,year)].values()
+    postfit_qcd_err = infile['shapes_fit_s/{}/total_background'.format(reg,)].variances()
+    data = infile['shapes_fit_s/{}/data'.format(reg)].values()
+    data_err = infile['shapes_fit_s/{}/data'.format(reg)].errors(which="mean")
+ 
+    #print(data)
+    bins = infile['shapes_prefit/{}/{}_qcd'.format(reg,year)].axis().edges()
+    centers = infile['shapes_fit_s/{}/{}_qcd'.format(reg,year)].axis().centers()
+    return data, prefit_qcd, postfit_qcd, bins, centers, prefit_qcd_err, postfit_qcd_err, data_err
 
 
-def prepostplot(data, prefit_qcd, postfit_qcd, bins, centers, degs=(1,2), year='2016', chi2=None, reg=None, savename=None):
+def prepostplot(data, prefit_qcd, postfit_qcd, bins, centers, prefit_qcd_err, postfit_qcd_err, data_err,  degs=(1,2), year='2016', chi2=None, reg=None, savename=None):
+    print(bins)
     width = (bins[1] - bins[0]) / 2
     
     fig, (ax, subax) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
     fig.subplots_adjust(hspace=0)
-    ax.set_xlim(40, 201)
+    ax.set_xlim(40, 301)
 
+    data = data[1]
     if chi2 is None:
         with np.errstate(divide='ignore'):
             chi2_pre = np.sum(np.nan_to_num((data-prefit_qcd)**2/prefit_qcd, 0))
@@ -141,16 +150,21 @@ def prepostplot(data, prefit_qcd, postfit_qcd, bins, centers, degs=(1,2), year='
         chi2_pre, chi2_post = chi2
     
     # Plot
-    hep.histplot(prefit_qcd, bins, color='red', linestyle="--", ax=ax,
+    hep.histplot(prefit_qcd, bins, yerr=prefit_qcd_err, color='red', linestyle="--", ax=ax,
                  label='PreFit, $\chi^2 = {:.1f}$'.format(chi2_pre))
-    hep.histplot(postfit_qcd, bins, color='blue', ax=ax, 
+    hep.histplot(postfit_qcd, bins, yerr=postfit_qcd_err, color='blue', ax=ax, 
                  label='PostFit, $\chi^2 = {:.1f}$'.format(chi2_post))
-    ax.errorbar(centers, data, fmt='o', xerr=width, color='black', label='True QCD')
+    #print(centersi,data)
+    print("data_err",data_err)
+    print("prefit_qcd_err",prefit_qcd_err)
+    print("postfit_qcd_err",postfit_qcd_err)
+    data_err = data_err[1]
+    ax.errorbar(centers, data, fmt='o', xerr=width, yerr=data_err, color='black', label='True QCD')
     
     leg = ax.legend(title=(reg+"\n" if reg is not None else "") + "TF({},{})".format(degs[0], degs[1]))
     plt.setp(leg.get_title(), multialignment='center')
     hep.cms.label(data=False, year=year, ax=ax)
-    ax.set_ylabel("Events / 7GeV", y=1, ha='right')
+    ax.set_ylabel(f"Events / {width*2} GeV", y=1, ha='right')
     ax.set_yticks(ax.get_yticks()[1:])
 
     #Subplots
@@ -163,29 +177,33 @@ def prepostplot(data, prefit_qcd, postfit_qcd, bins, centers, degs=(1,2), year='
     eb[-1][0].set_linestyle('--')
     subax.set_ylim(0.5, 1.5)
     subax.set_ylabel('Pred/True')
-    subax.set_xlabel('jet $m_{SD}$ [GeV]', x=1, ha='right')
+    subax.set_xlabel('Jet $m_{SD}$ [GeV]', x=1, ha='right')
 
     if savename is not None: 
         fig.savefig('{}.pdf'.format(savename), dpi=300, transparent=True, bbox_inches='tight')
         fig.savefig('{}.png'.format(savename), dpi=300, transparent=True, bbox_inches='tight')
 
-def prepostplotall(infile, year="2016", degs=(2,4), savename=None):
+def prepostplotall(infile, year="2016", degs=(2,4), savename=None, mc=False):
     col = []
-    for i in range(6):
-        reg = 'ptbin'+str(i)+'pass'+str(year)
-        col.append(prep_data(infile, reg))
+    for i in range(5):
+        reg = 'ptbin'+str(i)+'pass'
+        #reg = 'ptbin'+str(i)+'pass'+str(year)
+        col.append(prep_data(infile, reg, mc,year))
 
     data = np.sum(np.array(col)[:, 0], axis=0)
     prefit_qcd = np.sum(np.array(col)[:, 1], axis=0)
     postfit_qcd = np.sum(np.array(col)[:, 2], axis=0)
     bins = np.array(col)[0, 3]
     centers = np.array(col)[0, 4]
+    prefit_qcd_err = np.sum(np.array(col)[:, 5], axis=0)
+    postfit_qcd_err = np.sum(np.array(col)[:, 6], axis=0)
+    data_err = np.sum(np.array(col)[:, 7], axis=0)
 
     with np.errstate(divide='ignore'):
         chi2_pre = np.sum(np.nan_to_num(np.vstack((np.array(col)[:, 0] - np.array(col)[:, 1])**2 / np.array(col)[:, 1])))
         chi2_post = np.sum(np.nan_to_num(np.vstack((np.array(col)[:, 0] - np.array(col)[:, 2])**2 / np.array(col)[:, 2])))
 
-    prepostplot(data, prefit_qcd, postfit_qcd, bins, centers, degs=degs, chi2=(chi2_pre, chi2_post), year=year, savename=savename)
+    prepostplot(data, prefit_qcd, postfit_qcd, bins, centers, prefit_qcd_err, postfit_qcd_err, data_err, degs=degs, chi2=(chi2_pre, chi2_post), year=year, savename=savename)
     
 
 if __name__ == "__main__":
@@ -234,8 +252,8 @@ if __name__ == "__main__":
     savepath = os.path.join(args.outdir, "fplot_gofs_{}{}_{}{}".format(ref_pt, ref_rho, alt_pt, alt_rho))
     fgofs(gofs_base, gofs_alt, data_ref, data_alt, (ref_pt, ref_rho), (alt_pt, alt_rho), mc=args.mc, year=args.year, savename=savepath)
 
-    f_vals = fval(gofs_base, gofs_alt, p1, p2, 62) #args.nbins)
-    f_ref = fval(data_ref, data_alt, p1, p2, 62)#args.nbins)
+    f_vals = fval(gofs_base, gofs_alt, p1, p2, args.nbins)
+    f_ref = fval(data_ref, data_alt, p1, p2, args.nbins)
 
     savepath = os.path.join(args.outdir, "fplot_{}{}_{}{}".format(ref_pt, ref_rho, alt_pt, alt_rho))
     fplot(f_vals, f_ref, (ref_pt, ref_rho), (alt_pt, alt_rho), args.year, mc=args.mc, savename=savepath)
@@ -248,17 +266,19 @@ if __name__ == "__main__":
         fi_base = uproot.open(os.path.join(dirname,'fitDiagnostics.Base.root'))
         fi_alt = uproot.open(os.path.join(dirname,'fitDiagnostics.Alt.root'))
 
-        for i in range(6):
-            reg = 'ptbin'+str(i)+'pass'+str(args.year)
+        for i in range(5):
+            reg = 'ptbin'+str(i)+'pass'
+            #reg = 'ptbin'+str(i)+'pass'+str(args.year)
             savepath = os.path.join(args.outdir, "qcd_{}{}".format(ref_pt, ref_rho), "qcd_pt{}".format(i))
-            prepostplot(*prep_data(fi_base, reg), degs=(ref_pt, ref_rho), reg=reg, year=args.year, savename=savepath)   
+            prepostplot(*prep_data(fi_base, reg, args.mc,args.year), degs=(ref_pt, ref_rho), reg=reg, year=args.year, savename=savepath)   
         savepath = os.path.join(args.outdir, "qcd_{}{}".format(ref_pt, ref_rho), "qcd_allpt") 
-        prepostplotall(fi_base, savename=savepath, degs=(ref_pt, ref_rho), year=args.year)
+        prepostplotall(fi_base, savename=savepath, degs=(ref_pt, ref_rho), year=args.year, mc=args.mc)
 
-        for i in range(6):
-            reg = 'ptbin'+str(i)+'pass'+str(args.year)
+        for i in range(5):
+            reg = 'ptbin'+str(i)+'pass'
+            #reg = 'ptbin'+str(i)+'pass'+str(args.year)
             savepath = os.path.join(args.outdir, "qcd_{}{}".format(alt_pt, alt_rho), "qcd_pt{}".format(i))
-            prepostplot(*prep_data(fi_alt, reg), degs=(alt_pt, alt_rho), reg=reg, year=args.year, savename=savepath)   
+            prepostplot(*prep_data(fi_alt, reg, args.mc,args.year), degs=(alt_pt, alt_rho), reg=reg, year=args.year, savename=savepath)   
         savepath = os.path.join(args.outdir, "qcd_{}{}".format(alt_pt, alt_rho), "qcd_allpt") 
-        prepostplotall(fi_alt, savename=savepath, degs=(alt_pt, alt_rho), year=args.year)
+        prepostplotall(fi_alt, savename=savepath, degs=(alt_pt, alt_rho), year=args.year, mc=args.mc)
 

@@ -23,6 +23,10 @@ while [[ $# -gt 0 ]]; do
       ASIMOV=true
       shift
       ;;
+    --toysFrequentist)
+      TOYSFREQUENTIST=true
+      shift
+      ;;
     --limits)
       LIMITS=true
       shift
@@ -67,6 +71,9 @@ fi
 
 if [[ $ASIMOV == true ]]; then
    cmd+=" -t -1"
+fi
+if [[ $TOYSFREQUENTIST == true ]]; then
+   cmd+=" --toysFrequentist -t 1"
 fi
 
 echo evaluating $cmd

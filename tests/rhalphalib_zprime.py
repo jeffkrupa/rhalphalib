@@ -14,7 +14,7 @@ from array import array
 from rhalphalib import AffineMorphTemplate, MorphHistW2
 rl.util.install_roofit_helpers()
 #rl.ParametericSample.PreferRooParametricHist = False
-
+np.random.seed(1)
 parser = argparse.ArgumentParser(description='Rhalphalib setup.')
 parser.add_argument("--opath", action='store', type=str, required=True, help="Path to store output.")
 parser.add_argument("--ipt", action='store', type=int, required=True, help="TF pt order.")
@@ -27,10 +27,13 @@ parser.add_argument("--sigmass", action='store', type=str, required=False, defau
 #parser.add_argument("--root_path", action='store', type=str, required=True, help="Path to ROOT holding templates.")
 parser.add_argument("--root_file", action='store', type=str, required=True, help="Path to ROOT holding templates.")
 parser.add_argument("--all_signals", action='store_true', help="Run on all signal templates.")
+parser.add_argument("--scale_qcd", action='store_true', help="Scale QCD MC so its poisson matches true uncs.")
 parser.add_argument("--ftest", action='store_true', default=False, help="Run ftest.")
+parser.add_argument("--pseudo", action='store_true', default=False, help="Run pseudo data.")
 parser.add_argument("--MCTF", action='store_true', help="Prefit the TF params to MC.")
 parser.add_argument("--do_systematics", action='store_true', help="Include systematics.")
 parser.add_argument("--is_blinded", action='store_true', help="Run on 10pct dataset.")
+parser.add_argument("--throwPoisson", action='store_true', help="Throw poisson.")
 parser.add_argument("--year", action='store', type=str, help="Year to run on : one of 2016APV, 2016, 2017, 2018.")
 args = parser.parse_args()
 
@@ -65,11 +68,11 @@ lumi_1718_dict_unc = {
 
 def smass(sName):
     if 'hbb' in sName:
-        _mass = 135.
+        _mass = 125.
     elif sName in ['wqq', 'tt', 'st',]:
-        _mass = 90.
+        _mass = 80.
     elif sName in ['zqq', 'zcc', 'zbb']:
-        _mass = 100.
+        _mass = 90.
     else:
         raise ValueError("DAFUQ is {}".format(sName))
     return _mass
@@ -222,7 +225,7 @@ def plot_mctf(tf_MCtempl, msdbins, name):
 
     return
 
-def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017"):
+def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017",scaledown=False):
 
     hist_str = f"SR_{sample}_ptbin{ptbin}_{tagger}_{region}"
     if syst is not None:
@@ -231,58 +234,12 @@ def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year=
     with uproot.open(args.root_file) as f:
         #print(f.keys())
         hist = f[hist_str]
-    return (hist.values(), hist.axis().edges(), "msd", hist.variances())
-#'''
-#def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017"):
-#
-#    def get_factor(f,subsample):
-#        factor = 0.
-#        tree = f.Get("Runs")
-#        genEventSumw_buffer = array('d',[0.0]) 
-#        tree.SetBranchAddress("genEventSumw",genEventSumw_buffer)
-#        sum_genEventSumw = 0.
-#        for entry in range(tree.GetEntries()):
-#            tree.GetEntry(entry)
-#            sum_genEventSumw += genEventSumw_buffer[0]
-#
-#        lumi = lumi_dict[year]
-#        if args.is_blinded:
-#            lumi /= 10.
-#        xsec = xsec_dict[subsample]
-#        if sum_genEventSumw > 0.:
-#            factor = xsec*lumi/sum_genEventSumw
-#        else:
-#            raise RuntimeError(f"Factor for sample {subsample} <= 0")
-#        return factor 
-#
-#    master_hist = None
-#    
-#    hist_str = f"SR_ptbin{ptbin}_{tagger}_{region}"
-#    if syst is not None:
-#        hist_str += f"__{syst}"
-#    file0 = ROOT.TFile(f"{args.root_path}/{sample_maps[sample][0]}.root", "READ")
-#    hist0 = file0.Get(hist_str)
-#    ofile_path = f"{opath}/f{hist_str}_output_file.root"
-#    output_file = ROOT.TFile(ofile_path, "RECREATE")
-#    master_hist = hist0.Clone("msd")
-#    master_hist.Reset()
-#
-#    for subsample in sample_maps[sample]:
-#        file = ROOT.TFile(f"{args.root_path}/{subsample}.root")
-#        hist = file.Get(hist_str)
-#        if "JetHT" not in subsample:
-#            factor = get_factor(file,subsample)
-#            hist.Scale(factor)
-#        master_hist.Add(hist)  # Add to master, uncertainties are handled automatically
-#        file.Close()
-#
-#    master_hist.SetTitle("msd;msd;;")
-#    output_file.cd()
-#    master_hist.Write()
-#    output_file.Close()
-#    file0.Close()
-#    return master_hist,ofile_path
-#'''
+    hist_values = hist.values()
+    if scaledown:
+        hist_values *= 1e-2
+
+    return (hist_values, hist.axis().edges(), "msd", hist.variances())
+       
 def th1_to_numpy(path,label="msd"):
     with uproot.open(path) as file:
         th1d = file[label]
@@ -333,8 +290,8 @@ def shape_to_num(region, sName, ptbin, syst_down_up, mask, muon=False, bound=0.5
     #print(magnitude)
     return 1.0 + magnitude
 
-def test_rhalphabet(tmpdir,sig):
-    throwPoisson = False
+def test_rhalphabet(tmpdir,sig,throwPoisson=False):
+    
 
     jec = rl.NuisanceParameter("CMS_jec", "lnN")
     sys_shape_dict = {}
@@ -391,8 +348,6 @@ def test_rhalphabet(tmpdir,sig):
     for ptbin in range(npt):
         failCh = rl.Channel("ptbin%d%s" % (ptbin, "fail"))
         passCh = rl.Channel("ptbin%d%s" % (ptbin, "pass"))
-        qcdmodel.addChannel(failCh)
-        qcdmodel.addChannel(passCh)
         #QCD MC template
         ptnorm = 1
         failTempl = get_templ("fail", "QCD", ptbin, tagger)
@@ -404,16 +359,19 @@ def test_rhalphabet(tmpdir,sig):
         #print(failCh.getObservation()[0].shape)
         qcdfail += failCh.getObservation()[0].sum()
         qcdpass += passCh.getObservation()[0].sum()
+        if args.MCTF:
+            qcdmodel.addChannel(failCh)
+            qcdmodel.addChannel(passCh)
     qcdeff = qcdpass / qcdfail
     if args.MCTF:
         degsMC = tuple([int(s) for s in [args.iptMC, args.irhoMC]])
-
-        _initsMC = np.ones(tuple(n + 1 for n in degsMC))
-
+        _initsMC = np.load(f"data/inits_MC_{args.year}.npy")
+        #_initsMC = np.ones(tuple(n + 1 for n in degsMC))
+        print(_initsMC)
         tf_MCtempl = rl.BasisPoly(f"tf{args.year}_MCtempl",
                                       degsMC, ['pt', 'rho'], basis="Bernstein",
                                       init_params = _initsMC,
-                                      limits=(0, 10), coefficient_transform=None
+                                      limits=(-50, 50), coefficient_transform=None
         )
         #tf_MCtempl = rl.BernsteinPoly("tf_MCtempl", (1,1) , ["pt", "rho"],init_params=_inits, limits=(0, 10))
         tf_MCtempl_params = qcdeff * tf_MCtempl(ptscaled, rhoscaled)
@@ -425,25 +383,45 @@ def test_rhalphabet(tmpdir,sig):
             sigmascale = 10.0
             scaledparams = failObs * (1 + sigmascale / np.maximum(1.0, np.sqrt(failObs))) ** qcdparams
             fail_qcd = rl.ParametericSample("ptbin%dfail_qcd" % ptbin, rl.Sample.BACKGROUND, msd, scaledparams)
-            #print(fail_qcd._observable.binning)
+            print(fail_qcd._observable.binning)
             failCh.addSample(fail_qcd)
             pass_qcd = rl.TransferFactorSample("ptbin%dpass_qcd" % ptbin, rl.Sample.BACKGROUND, tf_MCtempl_params[ptbin, :], fail_qcd)
             passCh.addSample(pass_qcd)
-            validbins[ptbin][0:2] = False
+            #validbins[ptbin][0:2] = False
             failCh.mask = validbins[ptbin]
             passCh.mask = validbins[ptbin]
         qcdfit_ws = ROOT.RooWorkspace("qcdfit_ws")
         simpdf, obs = qcdmodel.renderRoofit(qcdfit_ws)
+        #gmin = ROOT.Math.Factory.CreateMinimizer("migrad2","minuit")
+        #ROOT.Math.MinimizerOptions.SetMaxIterations(gmin,1000000)
+        #gmin.Print()
+        #minimizer=ROOT.RooFit.Minimizer("Minuit2", "migrad")
+        #minimizer.setMaxFunctionCalls(10000000) 
         qcdfit = simpdf.fitTo(
             obs,
             ROOT.RooFit.Extended(True),
+            #ROOT.RooFit.AsymptoticError(True),
             ROOT.RooFit.SumW2Error(True),
-            ROOT.RooFit.Strategy(1),
+            ROOT.RooFit.Strategy(2),
+            #ROOT.RooFit.MaxCalls(1000000),
             ROOT.RooFit.Save(),
             ROOT.RooFit.Minimizer("Minuit2", "migrad"),
-            ROOT.RooFit.PrintLevel(-1),
+            #ROOT.RooFit.Minimizer("Minuit2", "migrad",ROOT.RooFit.Minimizer.setMaxFunctionCalls(10000000)),
+            ROOT.RooFit.PrintLevel(1),
             ROOT.RooFit.Verbose(0),
         )
+        '''
+        nll = simpdf.createNLL(obs, ROOT.RooFit.Extended(True), ROOT.RooFit.DataError(ROOT.RooAbsData.SumW2))
+        minimizer = ROOT.RooMinimizer(nll)
+        minimizer.setStrategy(0)  # As you had in your original setup
+        minimizer.setMaxFunctionCalls(10000000)  # Set the maximum number of function calls
+        minimizer.setMaxIterations(10000000)  # Set the maximum number of iterations
+        minimizer.setPrintLevel(1)  # Adjust the verbosity of the output
+        minimizer.setErrorLevel(100)  # Adjust the tolerance, higher might help
+        minimizer.minimize("Minuit2", "migrad")
+
+        qcdfit = minimizer.save()
+        ''' 
         qcdfit_ws.add(qcdfit)
         # Set parameters to fitted values  
         allparams = dict(zip(qcdfit.nameArray(), qcdfit.valueArray()))
@@ -452,23 +430,24 @@ def test_rhalphabet(tmpdir,sig):
             p.value = allparams[p.name]
             pvalues += [p.value]
 
-
+        print(pvalues)
         if "pytest" not in sys.modules:
             qcdfit_ws.writeToFile(os.path.join(str(tmpdir), "testModel_qcdfit.root"))
-        if qcdfit.status() != 0:
+        if not (qcdfit.status() == 0  or qcdfit.status() == 1):
             raise RuntimeError("Could not fit qcd")
-    
+        print("qcdprefit status=",qcdfit.status()) 
         plot_mctf(tf_MCtempl,msdbins,"all")
         param_names = [p.name for p in tf_MCtempl.parameters.reshape(-1)]
         decoVector = rl.DecorrelatedNuisanceVector.fromRooFitResult(tf_MCtempl.name + "_deco", qcdfit, param_names)
         tf_MCtempl.parameters = decoVector.correlated_params.reshape(tf_MCtempl.parameters.shape)
         tf_MCtempl_params_final = tf_MCtempl(ptscaled, rhoscaled)
+        #sys.exit()
 
     degs = tuple([int(s) for s in [args.ipt, args.irho]])
     _inits = np.ones(tuple(n + 1 for n in degs))
     tf_dataResidual = rl.BasisPoly(f"tf{args.year}_dataResidual",
                                        degs, ['pt', 'rho'], basis='Bernstein', init_params=_inits,
-                                       limits=(0, 10), coefficient_transform=None)
+                                       limits=(-50, 50), coefficient_transform=None)
     #tf_dataResidual = rl.BernsteinPoly("tf_dataResidual", poly_order, ["pt", "rho"], init_params=_inits, limits=(0, 10))
     tf_dataResidual_params = tf_dataResidual(ptscaled, rhoscaled)
 
@@ -490,25 +469,37 @@ def test_rhalphabet(tmpdir,sig):
 
             templates = {
                 "wqq"  : get_templ(region, "wqq", ptbin, tagger),
-                "zqq"  : get_templ(region, "zqq", ptbin, tagger),
+                "zqq"  : get_templ(region, "zqq", ptbin, tagger, scaledown=True if args.pseudo else False),
                 "tt"   : get_templ(region, "tt", ptbin, tagger),
                 "wlnu" : get_templ(region, "wlnu", ptbin, tagger),
                 "dy"   : get_templ(region, "dy", ptbin, tagger),
                 "st"   : get_templ(region, "st", ptbin, tagger),
                 "hbb"  : get_templ(region, "hbb", ptbin, tagger),  
+                "qcd"  : get_templ(region, "QCD", ptbin, tagger),  
             } 
+
+            
             if not args.ftest:
                 templates[sig] = get_templ(region, short_to_long[sig], ptbin, tagger)
             mask = validbins[ptbin].copy()
-            for sName in templates.keys():
+
+            if args.ftest:
+                include_samples = ["zqq"] #qcd here?
+            else:
+                include_samples = ["wqq","zqq","tt","wlnu","dy","st","hbb",sig]
+
+            for sName in include_samples:
                 # some mock expectations
                 templ = templates[sName]
+                print(ptbin, region, sName) 
+
                 if args.ftest:
                     stype = rl.Sample.SIGNAL if sName == "zqq" else rl.Sample.BACKGROUND
+                    #templ[0] = templ[0]*1e-4 #Scale down signal?
                 else:
                     stype = rl.Sample.SIGNAL if sName == sig else rl.Sample.BACKGROUND
                 sample = rl.TemplateSample(ch.name + "_" + sName, stype, templ)
-
+ 
 
                 def smorph(templ, sName):
                     if templ is None:
@@ -520,8 +511,6 @@ def test_rhalphabet(tmpdir,sig):
                     else:
                         return templ
                 ##https://github.com/nsmith-/rhalphalib/blob/master/rhalphalib/template_morph.py#L45-L58 how do i do this on ROOT templates?
-                #templ = smorph(templ, sName)
-                # sample.setParamEffect(jec, jecup_ratio)
                 if args.do_systematics:
 
                     sample.setParamEffect(sys_lumi, lumi_dict_unc[args.year])
@@ -569,13 +558,39 @@ def test_rhalphabet(tmpdir,sig):
                 ch.addSample(sample)
                  
 
-            if throwPoisson:
-                yields = np.random.poisson(yields)
-            data_obs = get_templ(region, f"JetHT_2017", ptbin, tagger)
+            if not args.pseudo:
+                data_obs = get_templ(region, f"JetHT_2017", ptbin, tagger)
+                if throwPoisson:
+                    yields = np.random.poisson(yields)
+            else:
+                yields = []
+ 
+                for sName in ["QCD"]:
+                    _sample = get_templ(region, sName, ptbin, tagger)
+                    _sample_yield = _sample[0]
+                    if args.scale_qcd: 
+                        dummyqcd = rl.TemplateSample("dummyqcd",rl.Sample.BACKGROUND , _sample)
+                        nomrate = dummyqcd._nominal
+                        downrate = np.sum(np.nan_to_num(dummyqcd._nominal - np.sqrt(dummyqcd._sumw2), 0.0))
+                        uprate = np.sum(np.nan_to_num(dummyqcd._nominal + np.sqrt(dummyqcd._sumw2), 0.0))
+                        diff = np.sum(np.abs(uprate-nomrate) + np.abs(downrate-nomrate))
+                        mean = diff/(2.*np.sum(nomrate))
+                        #sqrt(nom*N) = mean -> N = mean**2/nom
+                        scale = mean**2/np.sum(nomrate)
+                        print("qcdscale needed to match mcstat uncs: using poisson:", 1./scale)
+                        _sample_yield = _sample_yield.copy()*1./scale
+                    yields.append(_sample_yield)
+                yields = np.sum(np.array(yields), axis=0)
+
+                if throwPoisson:
+                    yields = np.random.poisson(yields)
+
+                data_obs = (yields, msd.binning, msd.name)
+
             ch.setObservation(data_obs[0:3])
 
             # drop bins outside rho validity
-            validbins[ptbin][0:2] = False
+            #validbins[ptbin][0:2] = False
             mask = validbins[ptbin]
             ch.mask = mask
 
@@ -585,16 +600,19 @@ def test_rhalphabet(tmpdir,sig):
 
         qcdparams = np.array([rl.IndependentParameter("qcdparam_ptbin%d_msdbin%d" % (ptbin, i), 0) for i in range(msd.nbins)])
         initial_qcd = failCh.getObservation().astype(float)  # was integer, and numpy complained about subtracting float from it
+        print("initial_qcd",initial_qcd)
         for sample in failCh:
-            #print(sample.name, sample.getExpectation(nominal=True))
+            print(sample.name, sample.getExpectation(nominal=True))
             initial_qcd -= sample.getExpectation(nominal=True)
+        if args.pseudo:
+            initial_qcd[initial_qcd<0] = 0.
         if np.any(initial_qcd < 0.0):
             raise ValueError("initial_qcd negative for some bins..", initial_qcd)
         sigmascale = 10  # to scale the deviation from initial
         scaledparams = initial_qcd * (1 + sigmascale / np.maximum(1.0, np.sqrt(initial_qcd))) ** qcdparams
-        fail_qcd = rl.ParametericSample("ptbin%dfail_qcd" % ptbin, rl.Sample.BACKGROUND, msd, scaledparams)
+        fail_qcd = rl.ParametericSample(f"ptbin{ptbin}fail_{args.year}_qcd" , rl.Sample.BACKGROUND, msd, scaledparams)
         failCh.addSample(fail_qcd)
-        pass_qcd = rl.TransferFactorSample("ptbin%dpass_qcd" % ptbin, rl.Sample.BACKGROUND, tf_params[ptbin, :], fail_qcd)
+        pass_qcd = rl.TransferFactorSample(f"ptbin{ptbin}pass_{args.year}_qcd" , rl.Sample.BACKGROUND, tf_params[ptbin, :], fail_qcd)
         passCh.addSample(pass_qcd)
 
         #To add
@@ -676,4 +694,4 @@ if __name__ == "__main__":
             sys.exit()
         else:
             os.makedirs(opath)
-        test_rhalphabet(opath,sig)
+        test_rhalphabet(opath,sig,args.throwPoisson)

@@ -40,8 +40,8 @@ if __name__ == '__main__':
     start = time.time()
     commands = []
 
-    rng_pt = 1
-    rng_rho = 1
+    rng_pt = 4
+    rng_rho = 4
 
     if args.param == 'cheby':
         basis = ' --basis Bernstein,Chebyshev'
@@ -57,14 +57,12 @@ if __name__ == '__main__':
                 ###I don't need just MC templates?
                 if args.mc:
                     cmd = (
-                        "python3 rhalphalib_zprime.py --MC --year {year} --templates temps/templates_preapproval{yearshort}_CC.root -o {dname}{p}{r} --degs {p},{r} "
-                        " --just Z --muCR False --MCTF False --muCR False --systs False --scale False --smear False --unblind "
-                        .format(year=args.year, yearshort=args.year[-2:], dname=args.d, p=str(pt), r=str(rho))
-                        + basis
+                        f"python3 rhalphalib_zprime.py --pseudo --year {args.year} --root_file {args.root_file} --o {args.opath}{pt}{rho} --ipt {pt} --irho {rho} --tagger {args.tagger} --ftest --throwPoisson "
+                        #+ basis
                     ) 
                 else:
                     cmd = (
-                        f"python3 rhalphalib_zprime.py --year {args.year} --root_file {args.root_file} --o {args.opath}{pt}{rho} --ipt {pt} --irho {rho} --do_systematics --tagger {args.tagger} --MCTF --irhoMC 1 --iptMC 1 --ftest "
+                        f"python3 rhalphalib_zprime.py --year {args.year} --root_file {args.root_file} --o {args.opath}{pt}{rho} --ipt {pt} --irho {rho} --do_systematics --tagger {args.tagger} --MCTF --irhoMC 4 --iptMC 1 --ftest "
                         #"--mutemplates temps/templatesmuCR_preapproval{yearshort}_CC.root  --muCR True "
                         + (" --is_blinded " if args.is_blinded else "")
                         #+ basis
@@ -104,7 +102,7 @@ if __name__ == '__main__':
         toy_cfg = " -t {} -s {} ".format(args.toys, args.seed)
         for i in range(0,rng_pt):
             for j in range(0,rng_pt):
-                base_cmd = "python3 custom.py  --debug True -d {} {} --year {} ".format(args.opath, "--mc" if args.mc else "--data", args.year)
+                base_cmd = "python3 custom.py  --debug False -d {} {} --year {} ".format(args.opath, "--mc" if args.mc else "--data", args.year)
                 ws_base = " -w {base}/{i}{j}/{tagger}/ipt{i}_irho{j}/m150/m150_model/model_combined.root "
                 ws_alt = " -a {base}/{i}{j}/{tagger}/ipt{i}_irho{j}/m150/m150_model/model_combined.root "
 

@@ -28,9 +28,10 @@ def exec_bash(command='echo "hello world"', debug=False):
 def FTest(seed=1, base=False, gen=False, fits=False, args=None, mc=True):
     debug = args.debug
     if mc:
-        overall_conf = " --setParameters r=0,z=0 --freezeParameters r,z --setParameterRanges r=-0.01,0.01:z=-0.01,0.01"
+        #overall_conf = f" --setParameters r=0 --freezeParameters r --expectSignal=0 --redefineSignalPOIs tf{args.year}_dataResidual_pt_par0_rho_par0 "
+        overall_conf = f" --setParameters r=0 --freezeParameters r --expectSignal=0 --redefineSignalPOIs tf{args.year}_dataResidual_pt_par0_rho_par0 "
     else:
-        overall_conf = f" --setParameters r=0 --freezeParameters r --redefineSignalPOIs tf{args.year}_dataResidual_pt_par0_rho_par0 "  
+        overall_conf = f" --expectSignal=0 --setParameters r=0 --freezeParameters r --redefineSignalPOIs tf{args.year}_dataResidual_pt_par0_rho_par0 "  
         #overall_conf = f" --setParameters r=0 --freezeParameters r --redefineSignalPOIs tf{args.year}_dataResidual_pt_par0_rho_par0 --toysFrequentist "  
         #overall_conf = " --setParameters r=1 --toysFrequentist --freezeParameters r --setParameterRanges r=-10,10 "
         #overall_conf = " --setParameters r=1,z=1  --toysFrequentist --freezeParameters r,z --setParameterRanges r=-10,10:z=0.95,1.05 "
@@ -73,13 +74,13 @@ def FTest(seed=1, base=False, gen=False, fits=False, args=None, mc=True):
         # Shapes from a fit
         command = (
             "combineTool.py -M FitDiagnostics --cminDefaultMinimizerStrategy 0 --robustFit=1   "
-            " -n .Base  --saveWorkspace --saveShapes"
+            " -n .Base  --saveWorkspace --saveShapes " #--SaveWithUncertainties"
             " -d {}".format(ws_base) + overall_conf)
         exec_bash(command, debug)
 
         command = (
             "combineTool.py -M FitDiagnostics --cminDefaultMinimizerStrategy 0 --robustFit=1   "
-            " -n .Alt  --saveWorkspace --saveShapes"
+            " -n .Alt  --saveWorkspace --saveShapes "#--saveWithUncertainties"
             " -d {}".format(ws_alt) + overall_conf)
         exec_bash(command, debug)
 
@@ -103,11 +104,11 @@ def FTest(seed=1, base=False, gen=False, fits=False, args=None, mc=True):
     if gen:
         command = ("combineTool.py -M GenerateOnly  --saveToys "
                 #" --snapshotName MultiDimFit --bypassFrequentistFit "
-                " --toysFrequentist "
                 " -n Toys "
                 " -t {t} --seed {s} "
                 " -d {ws}".format(ws="higgsCombine.BaseFit.MultiDimFit.mH120.root", t=args.toys, s=seed) +
                 overall_conf)
+        command+=" --toysFrequentist "
         if args.condor:
             command += CONDOR_str.format("toysgen_{}_{}".format(seed, pseudorand_str(4)))
         exec_bash(command, debug)
@@ -116,26 +117,30 @@ def FTest(seed=1, base=False, gen=False, fits=False, args=None, mc=True):
     if fits:
         command = ("combineTool.py -M GoodnessOfFit  --algo saturated --cminDefaultMinimizerStrategy 0 " 
             #" --snapshotName MultiDimFit --bypassFrequentistFit " 
-            " --toysFrequentist "
+            #" --toysFrequentist "
             " -n .BaseToys " 
             " -t {t} --seed {s} " 
             " --toysFile higgsCombineToys.GenerateOnly.mH120.{s}.root " 
             " -d {ws}".format(ws="higgsCombine.BaseFit.MultiDimFit.mH120.root", t=args.toys, s=seed) 
             +  overall_conf
         )
+        #if not args.mc:
+        #        command+=" --toysFrequentist "
         if args.condor:
             command += CONDOR_str.format("fitbase_{}_{}".format(seed, pseudorand_str(4)))
         exec_bash(command, debug)
 
         command = ("combineTool.py -M GoodnessOfFit  --algo saturated --cminDefaultMinimizerStrategy 0 " 
             #" --snapshotName MultiDimFit --bypassFrequentistFit " 
-            " --toysFrequentist "
+            #" --toysFrequentist "
             " -n .AltToys " 
             " -t {t} --seed {s} " 
             " --toysFile higgsCombineToys.GenerateOnly.mH120.{s}.root " 
             " -d {ws}".format(ws="higgsCombine.AltFit.MultiDimFit.mH120.root", t=args.toys, s=seed) 
             +  overall_conf
         )
+        #if not args.mc:
+        #        command+=" --toysFrequentist "
         if args.condor:
             command += CONDOR_str.format("fitalt_{}_{}".format(seed, pseudorand_str(4)))
         exec_bash(command, debug)

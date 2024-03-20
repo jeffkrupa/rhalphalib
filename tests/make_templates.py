@@ -127,7 +127,7 @@ def make_templates(path,region,sample,ptbin,tagger,syst=None,muon=False,nowarn=F
         file.Close()
     
     #hist_str = hist_str.replace(f"_ptbin{ptbin}",f"_{sample}_ptbin{ptbin}")
-    master_hist.SetTitle(master_hist_name+";"+hist_name+";;")
+    master_hist.SetTitle(master_hist_name+";"+master_hist_name+";;")
     output_file.cd()
     master_hist.Write()
     file0.Close()
@@ -137,20 +137,20 @@ if args.root_path:
     output_file = ROOT.TFile(args.root_path+f"/TEMPLATES{'_blind' if args.is_blinded else ''}.root", "RECREATE")
     print("Making SR templates from path ",args.root_path)
     for isamp,isamplist in sample_maps.items():
-        for tagger in ["pnmd2prong_0p05","n2_0p05"]:
-            for region in ["pass","fail"]:
+        for tagger in ["pnmd2prong_0p05"]:
+            for region in ["pass","fail","pass_lowbvl","pass_highbvl",]:
                 for iptbin in range(0,5):
-                    make_templates(region,isamp,iptbin,tagger,syst=None,muon=False,nowarn=False,year="2017")
+                    make_templates(args.root_path,region,isamp,iptbin,tagger,syst=None,muon=False,nowarn=False,year="2017")
                     if "JetHT" in isamp: continue
                     for syst in sys_names:
                         if "muo" in syst: continue
                         #print(isamp in ["zqq","dy"])
                         if syst in ['W_d2kappa_EW', 'W_d3kappa_EW'] and not isamp in ["wqq","wlnu"]: continue
-                        #####EXCLUDE FOR NOW if syst in ['Z_d2kappa_EW', 'Z_d3kappa_EW'] and not isamp in ["zqq","dy"]: continue
+                        if syst in ['Z_d2kappa_EW', 'Z_d3kappa_EW'] and not isamp in ["zqq","dy"]: continue
                         #if syst in ['d1kappa_EW','d1K_NLO','d2K_NLO','d3K_NLO'] and isamp not in ["wqq","zqq","dy","wlnu"]: continue
-                        if syst in ['d1kappa_EW','d1K_NLO','d2K_NLO','d3K_NLO'] and isamp not in ["wqq","wlnu"]: continue  ####ZQQ DY SHOULD BE ADDED BACK HERE
-                        make_templates(region,isamp,iptbin,tagger,syst=sys_name_updown[syst][0],muon=False,nowarn=False,year="2017")
-                        make_templates(region,isamp,iptbin,tagger,syst=sys_name_updown[syst][1],muon=False,nowarn=False,year="2017")
+                        if syst in ['d1kappa_EW','d1K_NLO','d2K_NLO','d3K_NLO'] and isamp not in ["wqq","wlnu","zqq","dy",]: continue  ####ZQQ DY SHOULD BE ADDED BACK HERE
+                        make_templates(args.root_path,region,isamp,iptbin,tagger,syst=sys_name_updown[syst][0],muon=False,nowarn=False,year="2017")
+                        make_templates(args.root_path,region,isamp,iptbin,tagger,syst=sys_name_updown[syst][1],muon=False,nowarn=False,year="2017")
                 #break
     
 

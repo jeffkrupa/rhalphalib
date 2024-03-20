@@ -34,6 +34,7 @@ parser.add_argument("--MCTF", action='store_true', help="Prefit the TF params to
 parser.add_argument("--do_systematics", action='store_true', help="Include systematics.")
 parser.add_argument("--is_blinded", action='store_true', help="Run on 10pct dataset.")
 parser.add_argument("--throwPoisson", action='store_true', help="Throw poisson.")
+parser.add_argument("--four_pt_bins", action='store_true', help="Sum the last two pt bins.")
 parser.add_argument("--year", action='store', type=str, help="Year to run on : one of 2016APV, 2016, 2017, 2018.")
 args = parser.parse_args()
 
@@ -225,8 +226,9 @@ def plot_mctf(tf_MCtempl, msdbins, name):
 
     return
 
-def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017",scaledown=False):
+def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year="2017",scaledown=False,fourptbins=False):
 
+   
     hist_str = f"SR_{sample}_ptbin{ptbin}_{tagger}_{region}"
     if syst is not None:
         hist_str = hist_str +"__"+syst
@@ -235,10 +237,19 @@ def get_templ(region,sample,ptbin,tagger,syst=None,muon=False,nowarn=False,year=
         #print(f.keys())
         hist = f[hist_str]
     hist_values = hist.values()
+    hist_variances = hist.variances()
+    hist_edges = hist.axis().edges()
     if scaledown:
         hist_values *= 1e-2
 
-    return (hist_values, hist.axis().edges(), "msd", hist.variances())
+    if fourptbins and ptbin==3:
+        with uproot.open(args.root_file) as f:
+            #print(f.keys())
+            hist = f[hist_str.replace("ptbin3","ptbin4")]
+        hist_values += hist.values()
+        hist_variances += hist.variances()
+
+    return (hist_values, hist_edges, "msd", hist_variances)
        
 def th1_to_numpy(path,label="msd"):
     with uproot.open(path) as file:
@@ -248,6 +259,8 @@ def th1_to_numpy(path,label="msd"):
 
 def shape_to_num(region, sName, ptbin, syst_down_up, mask, muon=False, bound=0.5, inflate=False):
     #print(sName)
+
+
     _nom = get_templ(region, sName, ptbin, tagger)
     #_nom = th1_to_numpy(path)
 
@@ -328,6 +341,8 @@ def test_rhalphabet(tmpdir,sig,throwPoisson=False):
     #with open(args.pickle, "rb") as f:
     #    df = pickle.load(f)
     ptbins = np.array([525, 575, 625, 700, 800, 1200])
+    if args.four_pt_bins:
+        ptbins = np.array([525, 575, 625, 700, 1200])
     npt = len(ptbins) - 1
     msdbins = np.linspace(40,350,63)
     msd = rl.Observable("msd", msdbins)
@@ -350,8 +365,8 @@ def test_rhalphabet(tmpdir,sig,throwPoisson=False):
         passCh = rl.Channel("ptbin%d%s" % (ptbin, "pass"))
         #QCD MC template
         ptnorm = 1
-        failTempl = get_templ("fail", "QCD", ptbin, tagger)
-        passTempl = get_templ("pass", "QCD", ptbin, tagger)
+        failTempl = get_templ("fail", "QCD", ptbin, tagger, fourptbins=args.four_pt_bins)
+        passTempl = get_templ("pass", "QCD", ptbin, tagger, fourptbins=args.four_pt_bins)
         #print(failTempl)
         failCh.setObservation(failTempl,read_sumw2=True)
         passCh.setObservation(passTempl,read_sumw2=True)
@@ -365,8 +380,8 @@ def test_rhalphabet(tmpdir,sig,throwPoisson=False):
     qcdeff = qcdpass / qcdfail
     if args.MCTF:
         degsMC = tuple([int(s) for s in [args.iptMC, args.irhoMC]])
-        _initsMC = np.load(f"data/inits_MC_{args.year}.npy")
-        #_initsMC = np.ones(tuple(n + 1 for n in degsMC))
+        #_initsMC = np.load(f"data/inits_MC_{args.year}.npy")
+        _initsMC = np.ones(tuple(n + 1 for n in degsMC))
         print(_initsMC)
         tf_MCtempl = rl.BasisPoly(f"tf{args.year}_MCtempl",
                                       degsMC, ['pt', 'rho'], basis="Bernstein",
@@ -459,6 +474,7 @@ def test_rhalphabet(tmpdir,sig,throwPoisson=False):
     # build actual fit model now
     model = rl.Model(f"{sig}_model")
 
+    scale_pass = []
     for ptbin in range(npt):
         for region in ["pass", "fail"]:
             ch = rl.Channel("ptbin%d%s" % (ptbin, region))
@@ -468,19 +484,19 @@ def test_rhalphabet(tmpdir,sig,throwPoisson=False):
             ptnorm = 1.0
 
             templates = {
-                "wqq"  : get_templ(region, "wqq", ptbin, tagger),
-                "zqq"  : get_templ(region, "zqq", ptbin, tagger, scaledown=True if args.pseudo else False),
-                "tt"   : get_templ(region, "tt", ptbin, tagger),
-                "wlnu" : get_templ(region, "wlnu", ptbin, tagger),
-                "dy"   : get_templ(region, "dy", ptbin, tagger),
-                "st"   : get_templ(region, "st", ptbin, tagger),
-                "hbb"  : get_templ(region, "hbb", ptbin, tagger),  
-                "qcd"  : get_templ(region, "QCD", ptbin, tagger),  
+                "wqq"  : get_templ(region, "wqq", ptbin, tagger, fourptbins=args.four_pt_bins),
+                "zqq"  : get_templ(region, "zqq", ptbin, tagger, fourptbins=args.four_pt_bins,scaledown=True if args.pseudo else False),
+                "tt"   : get_templ(region, "tt", ptbin, tagger, fourptbins=args.four_pt_bins),
+                "wlnu" : get_templ(region, "wlnu", ptbin, tagger, fourptbins=args.four_pt_bins),
+                "dy"   : get_templ(region, "dy", ptbin, tagger, fourptbins=args.four_pt_bins),
+                "st"   : get_templ(region, "st", ptbin, tagger, fourptbins=args.four_pt_bins),
+                "hbb"  : get_templ(region, "hbb", ptbin, tagger, fourptbins=args.four_pt_bins),  
+                "qcd"  : get_templ(region, "QCD", ptbin, tagger, fourptbins=args.four_pt_bins),  
             } 
 
             
             if not args.ftest:
-                templates[sig] = get_templ(region, short_to_long[sig], ptbin, tagger)
+                templates[sig] = get_templ(region, short_to_long[sig], ptbin, tagger, fourptbins=args.four_pt_bins)
             mask = validbins[ptbin].copy()
 
             if args.ftest:
@@ -559,29 +575,37 @@ def test_rhalphabet(tmpdir,sig,throwPoisson=False):
                  
 
             if not args.pseudo:
-                data_obs = get_templ(region, f"JetHT_2017", ptbin, tagger)
+                data_obs = get_templ(region, f"JetHT_2017", ptbin, tagger, fourptbins=args.four_pt_bins)
                 if throwPoisson:
                     yields = np.random.poisson(yields)
             else:
                 yields = []
  
                 for sName in ["QCD"]:
-                    _sample = get_templ(region, sName, ptbin, tagger)
+                    _sample = get_templ(region, sName, ptbin, tagger, fourptbins=args.four_pt_bins)
                     _sample_yield = _sample[0]
                     if args.scale_qcd: 
-                        dummyqcd = rl.TemplateSample("dummyqcd",rl.Sample.BACKGROUND , _sample)
-                        nomrate = dummyqcd._nominal
-                        downrate = np.sum(np.nan_to_num(dummyqcd._nominal - np.sqrt(dummyqcd._sumw2), 0.0))
-                        uprate = np.sum(np.nan_to_num(dummyqcd._nominal + np.sqrt(dummyqcd._sumw2), 0.0))
-                        diff = np.sum(np.abs(uprate-nomrate) + np.abs(downrate-nomrate))
-                        mean = diff/(2.*np.sum(nomrate))
-                        #sqrt(nom*N) = mean -> N = mean**2/nom
-                        scale = mean**2/np.sum(nomrate)
-                        print("qcdscale needed to match mcstat uncs: using poisson:", 1./scale)
-                        _sample_yield = _sample_yield.copy()*1./scale
-                    yields.append(_sample_yield)
+                        if region == "pass":
+           
+                            dummyqcd = rl.TemplateSample("dummyqcd",rl.Sample.BACKGROUND , _sample)
+                            nomrate = dummyqcd._nominal
+                            downrate = np.sum(np.nan_to_num(dummyqcd._nominal - np.sqrt(dummyqcd._sumw2), 0.0))
+                            uprate = np.sum(np.nan_to_num(dummyqcd._nominal + np.sqrt(dummyqcd._sumw2), 0.0))
+                            diff = np.sum(np.abs(uprate-nomrate) + np.abs(downrate-nomrate))
+                            mean = diff/(2.*np.sum(nomrate))
+                            #sqrt(nom*N) = mean -> N = mean**2/nom
+                            scale = mean**2/np.sum(nomrate)
+                            scale = 5 #1./np.sqrt(scale)
+                            scale_pass.append(scale)
+                            print("qcdscale needed to match mcstat uncs: using poisson:", scale)
+                            #_sample_yield = _sample_yield.copy()*1./scale
+                        elif region == "fail": 
+                            scale = scale_pass[ptbin ] 
+                        yields.append(_sample_yield*scale)
+                    else:
+                        yields.append(_sample_yield)
                 yields = np.sum(np.array(yields), axis=0)
-
+                print("ptbin/region",ptbin,region,yields)
                 if throwPoisson:
                     yields = np.random.poisson(yields)
 
